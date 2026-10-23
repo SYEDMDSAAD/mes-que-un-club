@@ -19,6 +19,7 @@ Two runs produce byte-identical files, including from an empty `cache/`.
 | tactical ATD, homography, Smart Tagging | `data/tactical/` | the challenge bundle (gated; not in this repo) |
 | broadcast ATD and homography | `data/broadcast/` | the challenge bundle (gated; not in this repo). The broadcast video is not needed |
 | DFL open data, 7 matches | `external/dfl/`, `cache/dfl/` | **downloaded automatically** from [figshare](https://doi.org/10.6084/m9.figshare.28196177) (Bassek et al. 2025, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); degraded to resemble our tracking, see TECHNICAL.md) |
+| Metrica sample data, 3 matches | `external/metrica/`, `cache/metrica/` | **downloaded automatically** from [GitHub](https://github.com/metrica-sports/sample-data) (Metrica Sports, published for public use; possession labels rebuilt from the events, see TECHNICAL.md) |
 
 No video is decoded. Everything derived from the data goes to `cache/`, which is gitignored, as are
 `data/` and `external/`.
@@ -35,15 +36,18 @@ No video is decoded. Everything derived from the data goes to `cache/`, which is
 | `ballfinder.py` | which player is nearest the unseen ball |
 | `dead_ml.py` | dead-ball classifier trained on DFL BallStatus |
 | `team_ml.py` | possession classifier trained on DFL BallPossession |
-| `seq.py` | second stage: H / A / D over a ±4 s window of the first-stage evidence, trained on DFL |
+| `seq.py` | second stage: H / A / D over a ±4 s window of the first-stage evidence, trained on DFL and Metrica |
 | `tags.py` | Smart Tagging intervals and set-piece evidence |
 | `external_dfl.py` | downloads and converts the DFL open data |
+| `external_metrica.py` | downloads and converts Metrica's sample matches, rebuilds possession labels from their events |
 
 ### Evaluation tools (not needed to reproduce)
 
 | file | what |
 |---|---|
 | `dfl_eval.py --bench` | scores the pipeline on all 7 DFL matches (damaged to look like our tracking), leave-one-match-out |
+| `metrica_eval.py`, `metrica_bench.py` | scores the pipeline on Metrica's 3 sample matches; second stage trained with and without them |
+| `seq_bench.py`, `context_bench.py` | decoder retune and auto-context experiments (dropped) |
 | `experiment.py` | public window + Smart Tagging consistency checks on BAR-ATH |
 | `gapsim.py` | deletes the ball where it was seen and measures how the model copes |
 | `gt_rules.py`, `diagnose.py` | what the public ground truth's boundaries line up with |

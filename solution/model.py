@@ -380,8 +380,12 @@ def seq_log_odds(feat):
 
 
 def dfl_eval_training_set():
+    """The second stage learns from the DFL matches and Metrica's sample matches together."""
     import dfl_eval
-    return dfl_eval.seq_training_set()
+    import external_metrica
+    xs, labels = dfl_eval.seq_training_set()
+    more_xs, more_labels = external_metrica.seq_training_set()
+    return xs + more_xs, labels + more_labels
 
 
 def ballfinder_log_odds(feat):

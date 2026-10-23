@@ -98,6 +98,18 @@ def features(feat):
     return np.column_stack(cols).astype(np.float32)
 
 
+def context_features(x, team, dead):
+    """x plus a previous round's own outputs (auto-context): its team and dead log-odds at the
+    same offsets and window means as the first-stage signals."""
+    cols = [x]
+    for s in (team, dead):
+        s = np.asarray(s, float)
+        cols.append(s[:, None])
+        cols += [shift(s, k)[:, None] for k in OFFSETS]
+        cols += [centred_mean(s, w)[:, None] for w in WINDOWS]
+    return np.hstack(cols).astype(np.float32)
+
+
 def fit(xs, labels):
     """Classifier on graded frames: classes D, H, A."""
     x = np.concatenate([a[::TRAIN_STEP] for a in xs])
