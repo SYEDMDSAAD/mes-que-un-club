@@ -1,8 +1,8 @@
-> **Submission repository.** This is the challenge repository with our solution added in
+> **Team Mes Que Un Club — submission repository.** This is the challenge repository with our solution added in
 > [`solution/`](solution/). Put the challenge bundle in `data/` as described below, then:
 > ```bash
 > pip install -r solution/requirements.txt          # Python 3.12
-> python solution/run.py --out <team_name>.csv
+> python solution/run.py --out "Mes Que Un Club.csv"
 > ```
 > Approach, assets, possession rules, limitations: [`solution/TECHNICAL.md`](solution/TECHNICAL.md).
 > No match data is included.

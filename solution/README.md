@@ -6,8 +6,8 @@ Regenerates the submission file from the provided match data.
 
 ```bash
 pip install -r solution/requirements.txt          # Python 3.12
-python solution/run.py --out <team_name>.csv      # ~10 min on first run, ~1 min after
-python evaluation/validate_submission.py <team_name>.csv
+python solution/run.py --out "Mes Que Un Club.csv"   # ~20 min on first run, ~1 min after
+python evaluation/validate_submission.py "Mes Que Un Club.csv"
 ```
 
 Two runs produce byte-identical files, including from an empty `cache/`.

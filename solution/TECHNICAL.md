@@ -1,6 +1,6 @@
 # Who has the ball — technical document
 
-More Than A Hack 2027, Phase 1 · BAR-ATH · rename to `<team_name>.md` on submission
+**Team Mes Que Un Club** · More Than A Hack 2027, Phase 1 · BAR-ATH
 
 ## In one paragraph
 
@@ -212,8 +212,8 @@ conservative weight. But the tagging is the only full-match signal from this mat
 ```bash
 pip install -r solution/requirements.txt           # Python 3.12.3, pinned versions
 # put the challenge bundle's data/tactical/ and data/broadcast/ files in data/ (no video needed)
-python solution/run.py --out <team_name>.csv       # ≈10 min on the first run, ≈1 min after
-python evaluation/validate_submission.py <team_name>.csv
+python solution/run.py --out "Mes Que Un Club.csv"   # ≈20 min on the first run, ≈1 min after
+python evaluation/validate_submission.py "Mes Que Un Club.csv"
 ```
 
 - The first run downloads the DFL matches from figshare, converts them, trains the three learned
