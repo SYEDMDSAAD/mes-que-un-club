@@ -18,7 +18,7 @@ Two runs produce byte-identical files, including from an empty `cache/`.
 |---|---|---|
 | tactical ATD, homography, Smart Tagging | `data/tactical/` | the challenge bundle (gated; not in this repo) |
 | broadcast ATD and homography | `data/broadcast/` | the challenge bundle (gated; not in this repo). The broadcast video is not needed |
-| DFL open data, 7 matches | `external/dfl/`, `cache/dfl/` | **downloaded automatically** from [figshare](https://doi.org/10.6084/m9.figshare.28196177) (Bassek et al. 2025, CC BY 4.0) |
+| DFL open data, 7 matches | `external/dfl/`, `cache/dfl/` | **downloaded automatically** from [figshare](https://doi.org/10.6084/m9.figshare.28196177) (Bassek et al. 2025, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); degraded to resemble our tracking, see TECHNICAL.md) |
 
 No video is decoded. Everything derived from the data goes to `cache/`, which is gitignored, as are
 `data/` and `external/`.

@@ -198,6 +198,15 @@ conservative weight. But the tagging is the only full-match signal from this mat
 
   A change was kept only if it did not hurt any of them.
 
+## Data sources and licences
+
+| source | licence / terms | how we use it | changes we make |
+|---|---|---|---|
+| Challenge bundle, BAR-ATH: tactical and broadcast tracking, homography, Smart Tagging | competition terms of data use; not redistributed, not in this repository | the input of the pipeline | none to the files; derived arrays are cached locally in the gitignored `cache/` |
+| DFL open data: Bassek, M., Rein, R., Weber, H. & Memmert, D. (2025). *An integrated dataset of spatiotemporal and event data in elite soccer.* Scientific Data. Data: [doi.org/10.6084/m9.figshare.28196177](https://doi.org/10.6084/m9.figshare.28196177) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | training the dead-ball, team and second-stage models; the 7-match benchmark | downloaded from the source at run time and not redistributed. Converted to arrays, and the tracking deliberately degraded to resemble BAR-ATH: ball deleted on our match's real gap pattern, 0.3 m ball and 0.1 m player position noise, 7% player dropouts (`dfl_eval.degrade`). The possession labels are used as published; a rewritten version was tried and dropped (§2) |
+| Metrica Sports sample data, [github.com/metrica-sports/sample-data](https://github.com/metrica-sports/sample-data) | published by Metrica Sports for public use, with the request to acknowledge the source | event data only, as a check on possession statistics (`metrica_events.py`); nothing from it enters the model | possession timelines rebuilt from the events |
+| Challenge repository code (scorer, validator, loaders), Metrica Sports | MIT (see `LICENSE`) | scoring, validation, data paths | none |
+
 ## 5. Reproduction
 
 ```bash
