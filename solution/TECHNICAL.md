@@ -123,6 +123,7 @@ so the figures can be rebuilt.
 | Retuning the decoder now the second stage exists: H↔A cost 7–13, stop/start 12 and 18 (`seq_bench.py`) | all within ±0.004 on DFL, none better on BAR-ATH. The costs stay |
 | A second round of the second stage that also reads the first round's own outputs (auto-context, `context_bench.py`) | per-frame team accuracy on DFL 0.872 → 0.867, spellF1 0.526 → 0.523–0.524. Dropped, although the public window rose |
 | Second stage trained on Metrica's matches only | best on Metrica (0.660), but DFL 0.503 and public 0.563: it learns Metrica's event-tagging timing rather than possession. Kept both sources (`metrica_bench.py`) |
+| Metrica labels sharpened with the tracking (`external_metrica.refine`): each team change moved back from the new team's first event to the moment its player reached the ball (a third of changes move, median 4 frames); and Metrica's matches counted twice in training | sharpened: DFL 0.530 → 0.529, public 0.613 → 0.600. Counted twice: Metrica 0.633 → 0.639 but DFL 0.527 and public 0.568. Both together: DFL and public unchanged, Metrica 0.642, which only reflects the extra weight on Metrica. Kept v11 (`metrica_bench.py`) |
 | Training on DFL without the ball position noise | DFL bench up to 0.475, BAR-ATH collapsed (public 0.31, dead share 0.48 → 0.34). TRACAB freezes the ball during stoppages, and the model learned "still ball = dead", a shortcut our tracking never offers. The noise stays, documented in `dfl_eval.degrade` |
 
 ## 3. Possession rules we implemented

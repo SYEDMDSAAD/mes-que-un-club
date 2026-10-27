@@ -47,6 +47,8 @@ PITCH = (105.0, 68.0)
 FPS = 25
 HALF_GAP = 5000           # frames of 'X' between the halves, as for DFL
 SPEED_HALF = 2            # frames each side for player speed
+REFINE_REACH = 2.0        # m: a player this close and nearest the ball has reached it
+REFINE_MAX_BACK = 75      # frames: how far back a change may move (3 s)
 MATCHES = ("Sample_Game_1", "Sample_Game_2", "Sample_Game_3")
 FILES = {"Sample_Game_1": ["RawEventsData.csv", "RawTrackingData_Home_Team.csv",
                            "RawTrackingData_Away_Team.csv"],
@@ -236,6 +238,34 @@ def convert(match):
 def load_match(match):
     d = np.load(convert(match))
     return d["ball"], d["players"], d["team"], d["labels"], [tuple(b) for b in d["blocks"]]
+
+
+def refine(labels, ball, players, team, reach=REFINE_REACH, max_back=REFINE_MAX_BACK):
+    """Copy of labels with each direct H <-> A change moved back to the new team's arrival.
+
+    An event-built change sits on the new team's first event, often its first pass; control
+    started earlier, when its player reached the ball. Walking back from the change, every frame
+    where the ball is tracked and a player of the new team is nearest it, within reach, joins the
+    new possession. The walk stops at the first frame that is not, after max_back frames, or at
+    the start of the old team's run.
+    """
+    out = labels.copy()
+    with np.errstate(invalid="ignore"):
+        d = np.hypot(players[..., 0] - ball[:, None, 0], players[..., 1] - ball[:, None, 1])
+        d = np.where(np.isfinite(d), d, np.inf)
+    nearest = np.argmin(d, axis=1)
+    near_team = np.where(d[np.arange(len(d)), nearest] < reach, team[nearest], -1)
+    starts = np.r_[0, np.flatnonzero(labels[1:] != labels[:-1]) + 1]
+    for prev, b in zip(starts[:-1], starts[1:]):
+        old, new = labels[b - 1], labels[b]
+        if old not in ("H", "A") or new not in ("H", "A") or old == new:
+            continue
+        side = 0 if new == "H" else 1
+        t = b - 1
+        while t > prev and b - t <= max_back and near_team[t] == side:
+            t -= 1
+        out[t + 1:b] = new
+    return out
 
 
 def seq_training_set():

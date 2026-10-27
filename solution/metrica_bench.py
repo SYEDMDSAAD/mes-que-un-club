@@ -27,6 +27,7 @@ ROOT = os.path.dirname(HERE)
 sys.path[:0] = [HERE, ROOT, os.path.join(ROOT, "evaluation")]
 import possession_metrics as pm  # noqa: E402
 import dfl_eval  # noqa: E402
+import external_metrica  # noqa: E402
 import experiment  # noqa: E402
 import load as loader  # noqa: E402
 import model  # noqa: E402
@@ -38,9 +39,17 @@ from features import compute  # noqa: E402
 
 # Params
 CACHE = os.path.join(ROOT, "cache", "bench_metrica_prepared.pkl")
-SOURCES = {"DFL only (v10)": ("dfl",), "DFL + Metrica": ("dfl", "metrica"),
-           "Metrica only": ("metrica",)}
+# name: (training sources, Metrica labels "events" or "refined", copies of each Metrica match)
+VARIANTS = {"DFL only (v10)": (("dfl",), "events", 1),
+            "DFL + Metrica (v11)": (("dfl", "metrica"), "events", 1),
+            "Metrica only": (("metrica",), "events", 1),
+            "DFL + Metrica refined": (("dfl", "metrica"), "refined", 1),
+            "DFL + Metrica x2": (("dfl", "metrica"), "events", 2),
+            "DFL + Metrica refined x2": (("dfl", "metrica"), "refined", 2)}
 WEIGHTS = (0.5, 1.0)
+RUN = ("DFL + Metrica (v11)", "DFL + Metrica refined", "DFL + Metrica x2",
+       "DFL + Metrica refined x2")
+RUN_WEIGHTS = (0.5,)
 
 
 def metrica_first_stage():
@@ -87,7 +96,6 @@ def dead_split(data):
 def main():
     met = metrica_first_stage()
     dfl = dfl_first_stage()
-    dead_split(met)
     x = {("dfl", m): seq.features(v[5]) for m, v in dfl.items()}
     x.update({("metrica", m): seq.features(v[5]) for m, v in met.items()})
     y = {("dfl", m): v[3] for m, v in dfl.items()}
@@ -100,34 +108,42 @@ def main():
     graded = model.graded_mask(len(x_bar))
     gt = pm.label_codes(pm.read_label_csv(experiment.GT))
 
-    print("{:<26} DFL spellF1 macroF1 p/t | Metrica spellF1 (per match) macroF1 p/t | "
+    refined = {("metrica", m): external_metrica.refine(v[3], v[0], v[1], v[2])
+               for m, v in met.items()}
+
+    def training(sources, labels, copies, leave_out=None):
+        keys = [k for k in x if k != leave_out and k[0] in sources]
+        keys = [k for k in keys for _ in range(copies if k[0] == "metrica" else 1)]
+        return ([x[k] for k in keys],
+                [refined[k] if labels == "refined" and k[0] == "metrica" else y[k] for k in keys])
+
+    print("{:<30} DFL spellF1 macroF1 p/t | Metrica spellF1 (per match) macroF1 p/t vsRefined | "
           "BAR-ATH spellF1 macroF1 tagTeam restart rLag poss dur Dshare".format(""))
-    for name, sources in SOURCES.items():
-        fills = {}
-        for key in x:
-            train = [k for k in x if k != key and k[0] in sources]
-            fills[key] = seq.log_odds(seq.fit([x[k] for k in train], [y[k] for k in train]),
-                                      x[key])
-        fitted = seq.fit([x[k] for k in x if k[0] in sources], [y[k] for k in x if k[0] in sources])
-        team, dead = seq.log_odds(fitted, x_bar)
-        for w in WEIGHTS:
+    for name in RUN:
+        sources, labels, copies = VARIANTS[name]
+        fills = {key: seq.log_odds(seq.fit(*training(sources, labels, copies, key)), x[key])
+                 for key in x}
+        team, dead = seq.log_odds(seq.fit(*training(sources, labels, copies)), x_bar)
+        for w in RUN_WEIGHTS:
             params = {"k_seq_team": w}
-            out = {}
+            out, vs_refined = {}, []
             for src, data in (("dfl", dfl), ("metrica", met)):
                 per = []
                 for m, (b, p, tm, t, bl, feat) in data.items():
                     feat["seq_team"], feat["seq_dead"] = fills[(src, m)]
-                    per.append(dfl_eval.metrics(t, dfl_eval.run_pipeline(b, p, tm, bl, params,
-                                                                         feat)))
+                    pred = dfl_eval.run_pipeline(b, p, tm, bl, params, feat)
+                    per.append(dfl_eval.metrics(t, pred))
+                    if src == "metrica":
+                        vs_refined.append(dfl_eval.metrics(refined[(src, m)], pred)[0])
                 out[src] = np.array(per)
             fb = dict(feat_bar)
             fb["seq_team"], fb["seq_dead"] = np.where(graded, team, 0.0), dead
             bar = experiment.score(model.predict(params, fb, events), gt, events)
             d, mt = out["dfl"].mean(axis=0), out["metrica"].mean(axis=0)
-            print("{:<26} {:.4f}  {:.4f}  {:.2f} | {:.4f} ({})  {:.4f}  {:.2f} | {}".format(
+            print("{:<30} {:.4f}  {:.4f}  {:.2f} | {:.4f} ({})  {:.4f}  {:.2f}  {:.4f} | {}".format(
                 "{}, w {}".format(name, w), d[0], d[1], d[4], mt[0],
-                " ".join("{:.3f}".format(v) for v in out["metrica"][:, 0]), mt[1], mt[4], bar),
-                flush=True)
+                " ".join("{:.3f}".format(v) for v in out["metrica"][:, 0]), mt[1], mt[4],
+                np.mean(vs_refined), bar), flush=True)
 
 
 if __name__ == "__main__":
