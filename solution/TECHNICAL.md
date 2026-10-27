@@ -25,7 +25,8 @@ visible. It is the 41% of graded frames where it is not. We attack that from fiv
 | ours without the second stage (v9) | spellF1 0.514 · macroF1 0.880 | spellF1 0.466 · macroF1 0.854 | spellF1 0.574 |
 | ours, second stage trained on DFL (v10) | spellF1 0.581 · macroF1 0.874 | spellF1 0.526² · macroF1 0.874 | spellF1 0.621 |
 | ours, second stage trained on DFL + Metrica (v11) | spellF1 0.613 · macroF1 0.899 | spellF1 0.530² · macroF1 0.874 | spellF1 0.633 |
-| **ours (submitted, v12): v11 + 7 s of dead-ball lean before a tagged set piece** | **spellF1 0.634 · macroF1 0.912** | **spellF1 0.530**²˒⁴ · macroF1 0.874 | **spellF1 0.633**⁴ |
+| ours, v11 + 7 s of dead-ball lean before a tagged set piece (v12) | spellF1 0.634 · macroF1 0.912 | spellF1 0.530²˒⁴ · macroF1 0.874 | spellF1 0.633⁴ |
+| **ours (submitted, v13): v12 with realistic ball damage in training (§3), dead before kickoff** | **spellF1 0.632 · macroF1 0.902** | spellF1 0.527²˒⁵ · macroF1 0.873 | **spellF1 0.650** |
 
 ¹ Leave-one-match-out, on DFL tracking damaged to look like ours (§3). This bench, not the public
 window, is what every design decision was made on. The public window is 17 possessions of mostly
@@ -40,6 +41,12 @@ Leave-one-match-out for the second stage; the first-stage models never see them.
 
 ⁴ v12 changes only the use of Smart Tagging, which the DFL and Metrica matches do not have, so
 their scores are v11's.
+
+⁵ v13 changes how the DFL test matches are damaged as well, so this is a different test, not
+comparable with the rows above. Metrica's matches are untouched, which makes them the yardstick
+for v13: up on all three (0.669 / 0.641 / 0.641 against 0.644 / 0.637 / 0.619). On BAR-ATH the
+public window is level (one possession either way), and both full-match Smart Tagging checks rise:
+team agreement 0.829 → 0.843 and set-piece restarts 0.797 → 0.847.
 
 ## 1. Approach
 
@@ -129,7 +136,11 @@ so the figures can be rebuilt.
 | A second round of the second stage that also reads the first round's own outputs (auto-context, `context_bench.py`) | per-frame team accuracy on DFL 0.872 → 0.867, spellF1 0.526 → 0.523–0.524. Dropped, although the public window rose |
 | Second stage trained on Metrica's matches only | best on Metrica (0.660), but DFL 0.503 and public 0.563: it learns Metrica's event-tagging timing rather than possession. Kept both sources (`metrica_bench.py`) |
 | Metrica labels sharpened with the tracking (`external_metrica.refine`): each team change moved back from the new team's first event to the moment its player reached the ball (a third of changes move, median 4 frames); and Metrica's matches counted twice in training | sharpened: DFL 0.530 → 0.529, public 0.613 → 0.600. Counted twice: Metrica 0.633 → 0.639 but DFL 0.527 and public 0.568. Both together: DFL and public unchanged, Metrica 0.642, which only reflects the extra weight on Metrica. Kept v11 (`metrica_bench.py`) |
-| Training on DFL without the ball position noise | DFL bench up to 0.475, BAR-ATH collapsed (public 0.31, dead share 0.48 → 0.34). TRACAB freezes the ball during stoppages, and the model learned "still ball = dead", a shortcut our tracking never offers. The noise stays, documented in `dfl_eval.degrade` |
+| Training on DFL without the ball position noise | DFL bench up to 0.475, BAR-ATH collapsed (public 0.31, dead share 0.48 → 0.34). TRACAB freezes the ball during stoppages, and the model learned "still ball = dead", a shortcut our tracking never offers. Solved in v13 by a drifting dead ball instead (§3) |
+| Slow ball noise without the dead-ball drift (`MQUC_VARIANT=noise`) | Metrica 0.633 → 0.648, but BAR-ATH public macroF1 0.90 → 0.67: the frozen-ball shortcut came back as soon as the per-frame jitter that hid it was gone |
+| The ball removed mostly in stoppages, at fixed rates (`MQUC_VARIANT=state`, `state40`) | Metrica up to 0.683, BAR-ATH public macroF1 0.72–0.74. In Metrica's matches the ball is almost never tracked when dead; in BAR-ATH's public window it still is on 67% of dead frames, so "no ball = stoppage" does not carry over |
+| Decoding for expected spellF1 instead of the most likely path (`mbr.py`, `mbr_bench.py`): posterior paths sampled, a candidate path chosen per stretch between sure stoppages | +0.0025 on DFL and Metrica at the best temperature, public window 0.621 → 0.600. Too small to be worth it; the posterior is overconfident (it expects F1 0.99), as 25 strongly correlated frames a second would predict. Off (`mbr_tau` 0) |
+| The broadcast tracking's players as a second opinion where the tactical tracking puts the wrong team nearest the ball (`broadcast_check.py`) | where tactical is wrong, broadcast is right on only 35% of frames. Not used |
 
 ## 3. Possession rules we implemented
 
@@ -152,9 +163,31 @@ new team or a kick (`gt_rules.py`). Our rules follow from that.
   slowing, the ball out of bounds). The restart comes from the same model plus the set-piece tags.
   The restart frame belongs to the team taking it.
 - **Fouls, offsides and injuries** are dead time like any other stoppage. No separate rule.
+- **Before kickoff.** The ball is dead until each half's kickoff, taken from the organisers'
+  anchors in `games.py` (the last second is left to the evidence). The second half's graded frames
+  begin 117 s before its kickoff, while players walk on; v12 found six possessions there.
 - **Abstention.** We write `X` only outside the halves (before kickoff, half-time, after the final
   whistle). Inside a half every frame is H, A or D, because the scorer fills `X` with the last
   label anyway.
+
+### Making the training ball look like ours (v13)
+
+The learned models train on DFL tracking damaged to resemble BAR-ATH. A review of that damage
+(`domain_check.py`, which prints the statistics the features are built on side by side) found
+that the 0.3 m of independent noise we added per frame was a median 12.5 m/s of fake ball speed:
+
+| | ball speed in play, median | frame-to-frame change of ball velocity, median | dead ball moved in 1 s, median |
+|---|---|---|---|
+| BAR-ATH (full match, our labels) | 5.8 m/s | 0.3 | 1.5 m |
+| DFL clean | 6.3 | 0.6–0.8 | 0.0 (frozen) |
+| DFL damaged, v12 | 14.6 | 21.8 | 0.5 |
+| **DFL damaged, v13** | **6.3** | **0.8** | **2.1** |
+
+So no model could learn from ball speed, which is half of what a touch looks like. The noise was
+there for a reason, though: TRACAB freezes a dead ball, and without the jitter the models learn
+"a still ball is dead". v13 uses slow noise (smoothed over half a second) and adds a slowly
+wandering ball in stoppages only, the way our ball is carried to the restart. Both halves are
+needed; slow noise alone collapsed BAR-ATH (§2).
 
 ### Whose convention: DFL's or Metrica's?
 
@@ -217,8 +250,9 @@ at a conservative weight. But the tagging is the only full-match signal from thi
 **Other limitations:**
 
 - **Tracking provider.** The learned models are trained on TRACAB tracking damaged to resemble
-  this match's ATD (our real ball-gap pattern, ball noise 0.3 m, player noise 0.1 m, 7% player
-  dropouts in 2 s chunks). Any difference the damage does not imitate is a risk. The
+  this match's ATD (our real ball-gap pattern, slow 0.3 m ball noise with a wandering ball in
+  stoppages, player noise 0.1 m, 7% player dropouts in 2 s chunks; `domain_check.py` compares the
+  statistics side by side). Any difference the damage does not imitate is a risk. The
   frozen-ball artefact above is the one we found.
 - **Validation.** We have no full-match ground truth. Decisions rest on:
   - the DFL bench
@@ -233,7 +267,7 @@ at a conservative weight. But the tagging is the only full-match signal from thi
 | source | licence / terms | how we use it | changes we make |
 |---|---|---|---|
 | Challenge bundle, BAR-ATH: tactical and broadcast tracking, homography, Smart Tagging | competition terms of data use; not redistributed, not in this repository | the input of the pipeline | none to the files; derived arrays are cached locally in the gitignored `cache/` |
-| DFL open data: Bassek, M., Rein, R., Weber, H. & Memmert, D. (2025). *An integrated dataset of spatiotemporal and event data in elite soccer.* Scientific Data. Data: [doi.org/10.6084/m9.figshare.28196177](https://doi.org/10.6084/m9.figshare.28196177) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | training the dead-ball, team and second-stage models; the 7-match benchmark | downloaded from the source at run time and not redistributed. Converted to arrays, and the tracking deliberately degraded to resemble BAR-ATH: ball deleted on our match's real gap pattern, 0.3 m ball and 0.1 m player position noise, 7% player dropouts (`dfl_eval.degrade`). The possession labels are used as published; a rewritten version was tried and dropped (§2) |
+| DFL open data: Bassek, M., Rein, R., Weber, H. & Memmert, D. (2025). *An integrated dataset of spatiotemporal and event data in elite soccer.* Scientific Data. Data: [doi.org/10.6084/m9.figshare.28196177](https://doi.org/10.6084/m9.figshare.28196177) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | training the dead-ball, team and second-stage models; the 7-match benchmark | downloaded from the source at run time and not redistributed. Converted to arrays, and the tracking deliberately degraded to resemble BAR-ATH: ball deleted on our match's real gap pattern; slow ball noise (0.3 m, smoothed over half a second) plus a slowly wandering ball in stoppages (1.5 m), 0.1 m player position noise, 7% player dropouts (`dfl_eval.degrade`). The possession labels are used as published; a rewritten version was tried and dropped (§2) |
 | Metrica Sports sample data (3 matches), [github.com/metrica-sports/sample-data](https://github.com/metrica-sports/sample-data) | published by Metrica Sports for public use, with the request to acknowledge the source | training the second-stage model with DFL; a 3-match benchmark | downloaded from the source at run time and not redistributed. Converted to arrays in metres; player speeds computed from positions; possession labels rebuilt from the events (§3) |
 | Challenge repository code (scorer, validator, loaders), Metrica Sports | MIT (see `LICENSE`) | scoring, validation, data paths | none |
 
@@ -249,7 +283,7 @@ python evaluation/validate_submission.py "Mes Que Un Club.csv"
 - The first run downloads the DFL matches from figshare and Metrica's sample matches from GitHub,
   converts them, trains the learned models and caches everything in `cache/`.
 - All randomness is seeded, and the file is **byte-identical** across runs, including from an empty
-  cache. Submitted file md5: `280e1082ed83fc6ff2d0278fe53e7b8b`.
+  cache. Submitted file md5: `01acb0b1abb19e6b8679bba7e4acab9c`.
 - Evaluation tools, none of them needed for reproduction:
   - `solution/dfl_eval.py --bench`: the DFL benchmark
   - `solution/metrica_eval.py`, `solution/metrica_bench.py`: the Metrica benchmark

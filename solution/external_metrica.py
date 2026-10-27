@@ -59,12 +59,12 @@ HOME_NAMES = ("Home", "Team A")
 
 
 def download(match):
-    import urllib.request
+    from external_dfl import fetch
     os.makedirs(DIR, exist_ok=True)
     for name in FILES[match]:
         path = os.path.join(DIR, "{}_{}".format(match, name))
         if not os.path.isfile(path):
-            urllib.request.urlretrieve("{}{}/{}_{}".format(URL, match, match, name), path)
+            fetch("{}{}/{}_{}".format(URL, match, match, name), path)
 
 
 def path(match, name):

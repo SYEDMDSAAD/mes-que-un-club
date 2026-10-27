@@ -19,6 +19,7 @@ The data is clean, manually checked tracking. degrade() makes it look like ours 
 
 import os
 import sys
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 
@@ -43,6 +44,22 @@ def match_ids():
     return ids, files
 
 
+def fetch(url, path, attempts=3):
+    """url -> path, all or nothing: written to path.part and renamed only when complete, so an
+    interrupted download is retried instead of being taken for the file next time."""
+    part = path + ".part"
+    for attempt in range(attempts):
+        try:
+            urllib.request.urlretrieve(url, part)
+            os.replace(part, path)
+            return
+        except (urllib.error.URLError, OSError):
+            if os.path.exists(part):
+                os.remove(part)
+            if attempt == attempts - 1:
+                raise
+
+
 def download(match_id, files):
     os.makedirs(DFL_DIR, exist_ok=True)
     paths = {}
@@ -53,7 +70,7 @@ def download(match_id, files):
             "positions" if "positions" in f["name"] else "events")
         path = os.path.join(DFL_DIR, f["name"])
         if not os.path.isfile(path):
-            urllib.request.urlretrieve(f["download_url"], path)
+            fetch(f["download_url"], path)
         paths[kind] = path
     return paths
 
