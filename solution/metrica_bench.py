@@ -33,12 +33,13 @@ import load as loader  # noqa: E402
 import model  # noqa: E402
 import seq  # noqa: E402
 import tags  # noqa: E402
+import variant  # noqa: E402
 from convention_bench import dfl_first_stage  # noqa: E402
 from external_metrica import MATCHES, load_match  # noqa: E402
 from features import compute  # noqa: E402
 
 # Params
-CACHE = os.path.join(ROOT, "cache", "bench_metrica_prepared.pkl")
+CACHE = variant.cache_path(os.path.join(ROOT, "cache", "bench_metrica_prepared.pkl"))
 # name: (training sources, Metrica labels "events" or "refined", copies of each Metrica match)
 VARIANTS = {"DFL only (v10)": (("dfl",), "events", 1),
             "DFL + Metrica (v11)": (("dfl", "metrica"), "events", 1),

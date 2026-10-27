@@ -26,7 +26,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from games import GAME, half_video_blocks  # noqa: E402
+from games import ANCHOR_FPS, GAME, GAMES, half_video_blocks  # noqa: E402
 from features import compute  # noqa: E402
 from load import load  # noqa: E402
 import ballfinder  # noqa: E402
@@ -87,6 +87,14 @@ PARAMS = {
     "switch": 9.0,        # H <-> A
     "stop": 15.0,         # H/A -> D
     "start": 15.0,        # D -> H/A
+    # final decode for expected spellF1 instead of the most likely path (mbr.py); 0 = Viterbi.
+    # Set from mbr_bench.py on the DFL and Metrica benches, never from the public window.
+    "mbr_tau": 0.0,
+    "mbr_prior_scale": None,  # None: the whole Viterbi score tempered by mbr_tau
+    "mbr_samples": 128,
+    # the ball is dead before each half's kickoff (games.py anchors), up to this many frames
+    # before it -- the last second is left to the evidence. None = off.
+    "kickoff_margin": 25,
 }
 STATES = np.array(["H", "A", "D"])
 # Set to [(first, last), ...] to run on a match other than BAR-ATH (see dfl_eval.py).
@@ -170,6 +178,25 @@ def tag_evidence(n, events, p):
     return team, dead
 
 
+def kickoff_frames():
+    """Video frame of each half's kickoff from the games.py anchors, or [] off BAR-ATH."""
+    if BLOCKS is not None:
+        return []
+    game = GAMES[GAME]
+    return [(a["minute"] * 60 + a["second"]) * ANCHOR_FPS + a["frame"]
+            for a in (game["kickoff"], game["kickoff_2nd"])]
+
+
+def before_kickoff(n, p):
+    """Graded frames before a half's kickoff (less the margin): the ball is not in play yet."""
+    out = np.zeros(n, dtype=bool)
+    if p["kickoff_margin"] is None:
+        return out
+    for (first, _), kick in zip(blocks(), kickoff_frames()):
+        out[first:max(first, kick - int(p["kickoff_margin"]))] = True
+    return out
+
+
 def emissions(feat, p, mask, events, form=None):
     """(N, 3) log-likelihoods for H, A, D. `form` is formation log-odds H vs A, if available."""
     team = team_log_odds(feat, p)
@@ -208,6 +235,8 @@ def emissions(feat, p, mask, events, form=None):
     out[:, H] = -np.logaddexp(0.0, -team)
     out[:, A] = -np.logaddexp(0.0, team)
     out[:, D] = dead
+    pre = before_kickoff(len(out), p)
+    out[pre, H] = out[pre, A] = -1e3
     return out
 
 
@@ -262,13 +291,27 @@ def switch_costs(feat, p):
     return out
 
 
-def decode(emit, p, feat=None):
-    """Viterbi per half. Label array of length N: H/A/D on graded frames, X elsewhere."""
+def decode(emit, p, feat=None, final=False):
+    """Viterbi per half. Label array of length N: H/A/D on graded frames, X elsewhere.
+
+    final=True with p["mbr_tau"] > 0 decodes both halves jointly for expected spellF1 instead
+    (mbr.py). Only the last decode of predict() does; the first pass, which trains the formation
+    model, stays Viterbi.
+    """
     cost = transition_costs(p)
+    labels = np.full(len(emit), "X", dtype="<U1")
+    if final and p.get("mbr_tau", 0.0) > 0:
+        import mbr
+        halves = [(first, last + 1) for first, last in blocks()]
+        paths = mbr.decode_match([emit[a:b] for a, b in halves], cost, tau=p["mbr_tau"],
+                                 n_samples=int(p["mbr_samples"]),
+                                 prior_scale=p["mbr_prior_scale"])
+        for (a, b), path in zip(halves, paths):
+            labels[a:b] = STATES[path]
+        return labels
     varying = feat is not None and (p["switch_contact"] != p["switch"]
                                     or p["switch_quiet"] != p["switch"])
     to_away, to_home = switch_costs(feat, p) if varying else (None, None)
-    labels = np.full(len(emit), "X", dtype="<U1")
     for first, last in blocks():
         seg = slice(first, last + 1)
         labels[seg] = STATES[viterbi(emit[seg], cost,
@@ -423,9 +466,10 @@ def predict(params=None, feat=None, events=None):
     events = events if events is not None else tags.load()
     mask = graded_mask(len(feat["ball_x"]))
 
-    labels = decode(emissions(feat, p, mask, events), p, feat)
-    if p["k_form_missing"] == 0 and p["k_form_seen"] == 0:
+    one_pass = p["k_form_missing"] == 0 and p["k_form_seen"] == 0
+    labels = decode(emissions(feat, p, mask, events), p, feat, final=one_pass)
+    if one_pass:
         return labels
     form = formation_log_odds(feat, labels, p)
-    labels = decode(emissions(feat, p, mask, events, form), p, feat)
+    labels = decode(emissions(feat, p, mask, events, form), p, feat, final=True)
     return snap(labels, feat, p) if p["snap_window"] else labels

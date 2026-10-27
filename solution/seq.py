@@ -28,6 +28,8 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 
+import variant
+
 # Params
 FPS = 25
 REACH = 1.5               # m
@@ -36,8 +38,8 @@ WINDOWS = (12, 25, 50, 100)
 CAP = 250                 # frames: "no touch for 10 s" is as far as the touch clock counts
 TRAIN_STEP = 5
 SEED = 0
-MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                          "cache", "seq_model.pkl")
+MODEL_PATH = variant.cache_path(os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache", "seq_model.pkl"))
 
 
 def shift(x, k):

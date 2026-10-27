@@ -35,6 +35,7 @@ sys.path[:0] = [HERE, ROOT, os.path.join(ROOT, "evaluation")]
 import possession_metrics as pm  # noqa: E402
 import load as loader  # noqa: E402
 import model  # noqa: E402
+import variant  # noqa: E402
 from external_dfl import load_match  # noqa: E402
 
 # Params
@@ -48,23 +49,102 @@ TRAIN_COPIES = 1
 RANDOM_BALL_NOISE = (0.15, 0.5)
 RANDOM_PLAYER_NOISE = (0.05, 0.3)
 RANDOM_PLAYER_DROP = (0.03, 0.12)
+# How the ball is damaged (MQUC_VARIANT selects another mode; unset = the submission):
+#
+#   "drift" (v13, the submission): BAR-ATH's gap pattern laid over the DFL half by time, plus slow
+#       noise (smoothed over ~0.5 s), plus a slowly wandering ball in stoppages. Independent noise
+#       per frame (v12) was a median 12.5 m/s of fake ball speed, so no model could learn real ball
+#       speed. But it also hid a TRACAB artefact: a dead ball frozen to the millimetre, where ours is
+#       carried to the restart (1-s displacement on dead frames: 1.5 m over the full match, 2.5 m in
+#       the public window, 0.0 clean DFL). Slow noise alone brought back "a still ball is dead" and
+#       collapsed BAR-ATH (public macroF1 0.67); the drift in stoppages removes that shortcut.
+#   "v12": independent 0.3 m noise per frame. "noise": slow noise without the drift.
+#   "state": the ball goes missing mostly in stoppages, at MISS_* rates and GAP_* means
+#       (domain_check.py measures them; "state40" uses the public window's rates).
+DEGRADE_MODE = ("state" if variant.TAG.startswith("state")
+                else variant.TAG if variant.TAG in ("v12", "noise") else "drift")
+DEAD_DRIFT = 1.5          # m, slow noise added on dead frames only ("drift")
+MISS_LIVE = 0.074         # share of live frames without a ball
+MISS_DEAD = 0.68          # share of dead frames without a ball
+GAP_LIVE = 30             # mean missing run inside live play, frames
+GAP_DEAD = 200            # mean missing run inside a stoppage, frames
+if variant.TAG == "state40":
+    MISS_LIVE, MISS_DEAD, GAP_LIVE, GAP_DEAD = 0.06, 0.40, 70, 260
+BALL_NOISE_SMOOTH = 12    # frames: Gaussian smoothing of the slow ball noise (state mode)
 
 
-def training_copies(ball, players, blocks):
+def training_copies(ball, players, blocks, truth=None):
     """The damaged versions of one match a learned model is trained on."""
     if TRAIN_COPIES <= 1:
-        return [degrade(ball, players, blocks)]
-    return [degrade(ball, players, blocks, seed=100 + k, randomize=True)
+        return [degrade(ball, players, blocks, truth=truth)]
+    return [degrade(ball, players, blocks, seed=100 + k, randomize=True, truth=truth)
             for k in range(TRAIN_COPIES)]
 
 
-def degrade(ball, players, blocks, seed=SEED, randomize=False):
+def state_seen(labels, rng):
+    """Ball-seen mask for one half from its labels: inside every live run and every stoppage,
+    alternating seen / missing stretches of exponential length, at MISS_* rates and GAP_* means."""
+    n = len(labels)
+    seen = np.ones(n, dtype=bool)
+    dead = labels == "D"
+    breaks = np.flatnonzero(dead[1:] != dead[:-1]) + 1
+    for lo, hi in zip(np.r_[0, breaks], np.r_[breaks, n]):
+        share, gap = (MISS_DEAD, GAP_DEAD) if dead[lo] else (MISS_LIVE, GAP_LIVE)
+        mean = {True: gap, False: gap * (1 - share) / share}
+        missing = bool(rng.random() < share)
+        t = lo
+        while t < hi:
+            length = 1 + int(rng.exponential(max(mean[missing] - 1, 1e-9)))
+            if missing:
+                seen[t:min(t + length, hi)] = False
+            t += length
+            missing = not missing
+    return seen
+
+
+def slow_noise(rng, n, sigma, smooth):
+    """(n, 2) noise per axis: white noise smoothed by a Gaussian of `smooth` frames, rescaled to
+    standard deviation sigma -- a slowly wandering offset with smooth velocity."""
+    from scipy.ndimage import gaussian_filter1d
+    z = gaussian_filter1d(rng.normal(0, 1, (n, 2)), smooth, axis=0, mode="nearest")
+    return z * (sigma / z.std(axis=0))
+
+
+def degrade_state(ball, players, blocks, seed, randomize, truth):
+    """DEGRADE_MODE "state": see the Params comment. Players are damaged as in "v12"."""
+    if truth is None:
+        raise ValueError("degrade in 'state' mode needs the match's labels (truth=...)")
+    rng = np.random.default_rng(seed)
+    ball_noise, player_noise, player_drop = BALL_NOISE, PLAYER_NOISE, PLAYER_DROP
+    if randomize:
+        ball_noise = rng.uniform(*RANDOM_BALL_NOISE)
+        player_noise = rng.uniform(*RANDOM_PLAYER_NOISE)
+        player_drop = rng.uniform(*RANDOM_PLAYER_DROP)
+    ball = ball.copy()
+    for first, last in blocks:
+        seen = state_seen(np.asarray(truth[first:last + 1]), rng)
+        ball[first:last + 1][~seen] = np.nan
+    if ball_noise:
+        ball[:, :2] += slow_noise(rng, len(ball), ball_noise, BALL_NOISE_SMOOTH).astype(ball.dtype)
+    players = players.copy()
+    players[..., :2] += rng.normal(0, player_noise, players[..., :2].shape)
+    n, s = players.shape[:2]
+    starts = rng.random((n, s)) < player_drop / DROP_LEN
+    for t, k in zip(*np.nonzero(starts)):
+        players[t:t + DROP_LEN, k] = np.nan
+    return ball, players
+
+
+def degrade(ball, players, blocks, seed=SEED, randomize=False, truth=None):
     """Damage clean DFL tracking to look like ours.
 
     randomize=True draws the noise levels, the dropout rate and where in our match the ball-gap
     pattern is taken from, per call -- used for training copies, so a learned model sees many
     versions of the damage and cannot lean on any single one of them.
+    truth (the match's labels) is needed by DEGRADE_MODE "state" only.
     """
+    if DEGRADE_MODE == "state":
+        return degrade_state(ball, players, blocks, seed, randomize, truth)
     rng = np.random.default_rng(seed)
     ball_noise, player_noise, player_drop = BALL_NOISE, PLAYER_NOISE, PLAYER_DROP
     shift = 0
@@ -73,7 +153,13 @@ def degrade(ball, players, blocks, seed=SEED, randomize=False):
         player_noise = rng.uniform(*RANDOM_PLAYER_NOISE)
         player_drop = rng.uniform(*RANDOM_PLAYER_DROP)
         shift = int(rng.integers(0, 60000))
-    ours, _, _ = loader.load()
+    # Our ball even when the pipeline is pointed at another match (loader.OVERRIDE): a model first
+    # trained from inside such a run would otherwise learn that match's gap pattern.
+    saved, loader.OVERRIDE = loader.OVERRIDE, None
+    try:
+        ours, _, _ = loader.load()
+    finally:
+        loader.OVERRIDE = saved
     our_blocks = [(first, last) for _, first, last in model.half_video_blocks(model.GAME)]
     ball = ball.copy()
     for (first, last), (o_first, o_last) in zip(blocks, our_blocks):
@@ -82,7 +168,14 @@ def degrade(ball, players, blocks, seed=SEED, randomize=False):
         seen = np.roll(seen, shift)
         seen = np.resize(seen, n)                         # tile if the DFL half is longer
         ball[first:last + 1][~seen] = np.nan
-    if ball_noise:
+    if ball_noise and DEGRADE_MODE in ("noise", "drift"):
+        ball[:, :2] += slow_noise(rng, len(ball), ball_noise, BALL_NOISE_SMOOTH).astype(ball.dtype)
+        if DEGRADE_MODE == "drift":
+            if truth is None:
+                raise ValueError("degrade in 'drift' mode needs the match's labels (truth=...)")
+            drift = slow_noise(rng, len(ball), DEAD_DRIFT, BALL_NOISE_SMOOTH)
+            ball[:, :2] += (drift * (np.asarray(truth) == "D")[:, None]).astype(ball.dtype)
+    elif ball_noise:
         ball[:, :2] += rng.normal(0, ball_noise, ball[:, :2].shape)
 
     players = players.copy()
@@ -152,10 +245,10 @@ def prepare(matches=None, dead_ml=False, team_ml=False):
     data, copies = {}, {}
     for m in matches:
         ball, players, team, truth, blocks = load_match(m)
-        d_ball, d_players = degrade(ball, players, blocks)
+        d_ball, d_players = degrade(ball, players, blocks, truth=truth)
         data[m] = (d_ball, d_players, team, truth, blocks, {})
         if dead_ml or team_ml:
-            copies[m] = (training_copies(ball, players, blocks)
+            copies[m] = (training_copies(ball, players, blocks, truth)
                          if TRAIN_COPIES > 1 else [(d_ball, d_players)])
     if dead_ml:
         import dead_ml as dm
@@ -230,7 +323,7 @@ def bench(variants, matches=None, with_baseline=True, dead_ml=False, team_ml=Fal
 
 def evaluate(match_id, variants):
     ball, players, team, truth, blocks = load_match(match_id)
-    d_ball, d_players = degrade(ball, players, blocks)
+    d_ball, d_players = degrade(ball, players, blocks, truth=truth)
     print(match_id)
     print("  {:<34} {}".format("baseline smooth50 (damaged)",
                                score(truth, baseline(d_ball, d_players, team, blocks))))

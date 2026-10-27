@@ -27,10 +27,11 @@ import load as loader  # noqa: E402
 import model  # noqa: E402
 import seq  # noqa: E402
 import tags  # noqa: E402
+import variant  # noqa: E402
 from features import compute  # noqa: E402
 
 # Params
-CACHE = os.path.join(ROOT, "cache", "bench_dfl_prepared.pkl")
+CACHE = variant.cache_path(os.path.join(ROOT, "cache", "bench_dfl_prepared.pkl"))
 SCORE_REWRITE = (50, True)       # the rewrite the "vs rewritten" column is scored against
 VARIANTS = {"v10 (original labels)": None, "rewrite <1s +to_dead": (25, True),
             "rewrite <2s": (50, False), "rewrite <2s +to_dead": (50, True)}

@@ -24,14 +24,16 @@ import pickle
 import numpy as np
 from sklearn.ensemble import HistGradientBoostingClassifier
 
+import variant
+
 # Params
 PITCH = (105.0, 68.0)
 FPS = 25
 OFFSETS = (-100, -50, -25, 0, 25, 50, 100)
 TRAIN_STEP = 5
 SEED = 0
-MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                          "cache", "dead_ml_model.pkl")
+MODEL_PATH = variant.cache_path(os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache", "dead_ml_model.pkl"))
 
 
 def window_mean(x, half=FPS // 2):
@@ -140,7 +142,7 @@ def dfl_training_set():
     xs, ys = [], []
     for m in sorted(ids):
         ball, players, _, truth, blocks = load_match(m)
-        for d_ball, d_players in dfl_eval.training_copies(ball, players, blocks):
+        for d_ball, d_players in dfl_eval.training_copies(ball, players, blocks, truth):
             xs.append(features(d_ball, d_players, blocks))
             ys.append(truth == "D")
     return xs, ys

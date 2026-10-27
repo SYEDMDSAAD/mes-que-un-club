@@ -24,6 +24,7 @@ import numpy as np
 from sklearn.ensemble import HistGradientBoostingClassifier
 
 import formation
+import variant
 from dead_ml import window_mean
 
 # Params
@@ -31,8 +32,8 @@ PITCH = (105.0, 68.0)
 FPS = 25
 TRAIN_STEP = 5
 SEED = 0
-MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                          "cache", "team_ml_model.pkl")
+MODEL_PATH = variant.cache_path(os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache", "team_ml_model.pkl"))
 
 
 def ball_side_stats(bx, by, players, team):
@@ -119,7 +120,7 @@ def dfl_training_set():
     xs, labels = [], []
     for m in sorted(ids):
         ball, players, team, truth, blocks = load_match(m)
-        for d_ball, d_players in dfl_eval.training_copies(ball, players, blocks):
+        for d_ball, d_players in dfl_eval.training_copies(ball, players, blocks, truth):
             xs.append(features(d_ball, d_players, team, blocks))
             labels.append(truth)
     return xs, labels
