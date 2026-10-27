@@ -24,7 +24,8 @@ visible. It is the 41% of graded frames where it is not. We attack that from fiv
 | organisers' baseline (`smooth50`) | spellF1 0.326 · macroF1 0.621 | spellF1 0.201 | spellF1 0.499 |
 | ours without the second stage (v9) | spellF1 0.514 · macroF1 0.880 | spellF1 0.466 · macroF1 0.854 | spellF1 0.574 |
 | ours, second stage trained on DFL (v10) | spellF1 0.581 · macroF1 0.874 | spellF1 0.526² · macroF1 0.874 | spellF1 0.621 |
-| **ours (submitted, v11): second stage trained on DFL + Metrica** | **spellF1 0.613 · macroF1 0.899** | **spellF1 0.530**² · macroF1 0.874 | **spellF1 0.633** |
+| ours, second stage trained on DFL + Metrica (v11) | spellF1 0.613 · macroF1 0.899 | spellF1 0.530² · macroF1 0.874 | spellF1 0.633 |
+| **ours (submitted, v12): v11 + 7 s of dead-ball lean before a tagged set piece** | **spellF1 0.634 · macroF1 0.912** | **spellF1 0.530**²˒⁴ · macroF1 0.874 | **spellF1 0.633**⁴ |
 
 ¹ Leave-one-match-out, on DFL tracking damaged to look like ours (§3). This bench, not the public
 window, is what every design decision was made on. The public window is 17 possessions of mostly
@@ -36,6 +37,9 @@ every input is out of sample.
 
 ³ Metrica's public sample matches, with possession labels rebuilt from their event data (§3).
 Leave-one-match-out for the second stage; the first-stage models never see them.
+
+⁴ v12 changes only the use of Smart Tagging, which the DFL and Metrica matches do not have, so
+their scores are v11's.
 
 ## 1. Approach
 
@@ -71,7 +75,7 @@ We chose an HMM and Viterbi over an end-to-end sequence model for three reasons:
 | **Learned team model** (`team_ml.py`) | everywhere | gradient-boosted classifier on DFL BallPossession: both teams' nearest and second-nearest distances and counts within 3/6 m, now, at the last-seen ball and at the next-seen ball, smoothed, plus the formation features. Output minus the training prior, weight 0.2 |
 | **Learned dead model** (`dead_ml.py`) | everywhere | gradient-boosted classifier on DFL BallStatus: player speed from 4 s before to 4 s after the frame (scaled by the match's own typical speed), ball seen, moving, out of bounds, distance to lines and corners, crowding. It replaced our hand-built stoppage rules, which called slow build-up dead |
 | **Second stage** (`seq.py`) | everywhere, mostly around changes | gradient-boosted H / A / D classifier on the DFL labels and on Metrica's three sample matches (labels rebuilt from their events, `external_metrica.py`) over a ±4 s window of the evidence above: the nearest-team distance gap, the learned team and dead outputs, the ball-finder, ball speed and player speed at offsets from −2 s to +2 s and as window means; frames since the last and until the next touch by each team; how often the nearest team flips within ±1 s and ±2 s (a scramble). Its inputs on the training matches are out of sample, as they are on BAR-ATH. Only its team log-odds are used, at weight 0.5. Per-frame team accuracy on DFL rises 2–4 points over the first-stage team model on every match |
-| **Smart Tagging** (`tags.py`) | set pieces | a set-piece tag's restart sits about 88 frames (3.5 s) after the tag opens, the same as the kickoff tags. The seconds before lean dead, the seconds after lean live and towards the restarting team when the tag names one |
+| **Smart Tagging** (`tags.py`) | set pieces | a set-piece tag's restart sits about 88 frames (3.5 s) after the tag opens, the same as the kickoff tags. The 7 s before lean dead (in Metrica's matches the ball is dead for at least 7 s before 76% of set pieces: median 13 s, 9 s before a throw-in, 23 s before a free kick, 29 s before a corner), the seconds after lean live and towards the restarting team when the tag names one |
 
 ## 2. Assets: used, and tried and dropped
 
@@ -119,6 +123,7 @@ so the figures can be rebuilt.
 | A better change detector alone (tested with an *oracle*: switching made cheap exactly at the true changes) | even perfect knowledge of where changes happen only reached DFL 0.52, and a realistic 60%-recall detector 0.49. That showed the per-frame evidence was the bottleneck, not the decoder, and led to the second stage, which reached 0.526 without any oracle |
 | **Ball detector on the tactical video** (`video/ball_detector.py`, `video_value.py`): YOLO fine-tuned on this match's own frames, with the ATD ball projected through the homography as automatic labels (no hand labels); cleaned labels (no height, away from gap edges, steady path) and three frames t−2, t, t+2 as the input channels, so a moving ball shows as a streak | on held-out tracked frames, 36% of top detections are within 10 px, and confident ones (≥ 0.3) are right 80–86% of the time. But 89% of the frames where our ball is still missing are stoppages, and only 7.4% of live frames lack a ball after the broadcast fill, so there is little left to fill. Filling moving detections changed public spellF1 0.581 → 0.587 (no extra possession found, one false one fewer) and the restart check 0.814 → 0.797. **Left out**: the gain is small, and a GPU-trained detector cannot be guaranteed to retrain to the same weights, which would put the byte-identical reproduction at risk |
 | **DFL labels rewritten to "controlled possession"** (`convention.py`, `convention_bench.py`): a spell of one team shorter than 1 or 2 s between spells of the other team given back to that team, as a deflection, then the second stage retrained | no gain. Scored against rewritten DFL labels, v10 already reaches 0.629 (the rewrites 0.621–0.630). On BAR-ATH the rewrites predict fewer possessions (301 → 270–276) and public spellF1 falls 0.581 → 0.573. v10 already ignores most one-touch spells |
+| A longer dead-ball lean before tagged set pieces: 10 or 15 s instead of 7 (4 in v11) | 7 s removes the one fake restart the public window shows (public 0.613 → 0.634) and changes the full match in a dozen places, mostly stoppages starting a few seconds earlier. 10 and 15 s leave the public window as it is but remove 7 and 16 more possessions on the full match, cutting into live play before quick throw-ins, a third of which come less than 10 s after the ball went out. Kept 7 s |
 | Second stage at weight 1.0 instead of 0.5 | DFL 0.526 → 0.537 and Metrica 0.621 → 0.633, but BAR-ATH macroF1 0.874 → 0.855 and the tag agreement fell; the same with Metrica added (public 0.613 → 0.600, 323 → 347 possessions). Kept 0.5 |
 | Retuning the decoder now the second stage exists: H↔A cost 7–13, stop/start 12 and 18 (`seq_bench.py`) | all within ±0.004 on DFL, none better on BAR-ATH. The costs stay |
 | A second round of the second stage that also reads the first round's own outputs (auto-context, `context_bench.py`) | per-frame team accuracy on DFL 0.872 → 0.867, spellF1 0.526 → 0.523–0.524. Dropped, although the public window rose |
@@ -244,7 +249,7 @@ python evaluation/validate_submission.py "Mes Que Un Club.csv"
 - The first run downloads the DFL matches from figshare and Metrica's sample matches from GitHub,
   converts them, trains the learned models and caches everything in `cache/`.
 - All randomness is seeded, and the file is **byte-identical** across runs, including from an empty
-  cache. Submitted file md5: `c322c1bfad9ef0e077847ce0c2fec8c2`.
+  cache. Submitted file md5: `280e1082ed83fc6ff2d0278fe53e7b8b`.
 - Evaluation tools, none of them needed for reproduction:
   - `solution/dfl_eval.py --bench`: the DFL benchmark
   - `solution/metrica_eval.py`, `solution/metrica_bench.py`: the Metrica benchmark

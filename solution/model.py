@@ -62,6 +62,7 @@ PARAMS = {
     # set-piece tags, in frames relative to the tag start
     "restart": tags.RESTART_OFFSET,
     "k_tag_dead": 1.0,
+    "tag_dead_before": 175,   # frames before the restart that lean dead (7 s)
     "k_tag_live": 1.0,
     "k_tag_team": 1.0,
     # formation evidence (second pass), per frame, scaled down because neighbouring frames are
@@ -161,7 +162,7 @@ def tag_evidence(n, events, p):
         if e["code"] != tags.SET_PIECE:
             continue
         restart = e["start"] + p["restart"]
-        dead[max(restart - 100, 0):restart] += p["k_tag_dead"]
+        dead[max(restart - int(p["tag_dead_before"]), 0):restart] += p["k_tag_dead"]
         dead[restart + 25:restart + 150] -= p["k_tag_live"]
         if e["side"] is not None:
             sign = 1.0 if e["side"] == "H" else -1.0
