@@ -102,7 +102,7 @@ PARAMS = {
     "video_min": 2.0,
     "k_video_team": 0.0,      # team log-odds per frame around a video event (video_events.py)
     "video_hold": 0,          # frames a video touch's team evidence is carried towards the next
-    "k_change": 0.0,
+    "k_change": 2.0,
     "change_min": 2.0,
 }
 STATES = np.array(["H", "A", "D"])
