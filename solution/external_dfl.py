@@ -18,6 +18,7 @@ The data is clean, manually checked tracking. degrade() makes it look like ours 
 """
 
 import os
+import shutil
 import sys
 import urllib.error
 import urllib.request
@@ -44,13 +45,15 @@ def match_ids():
     return ids, files
 
 
-def fetch(url, path, attempts=3):
+def fetch(url, path, attempts=3, timeout=60):
     """url -> path, all or nothing: written to path.part and renamed only when complete, so an
-    interrupted download is retried instead of being taken for the file next time."""
+    interrupted download is retried instead of being taken for the file next time. A connection
+    that goes silent for `timeout` seconds counts as interrupted."""
     part = path + ".part"
     for attempt in range(attempts):
         try:
-            urllib.request.urlretrieve(url, part)
+            with urllib.request.urlopen(url, timeout=timeout) as response, open(part, "wb") as out:
+                shutil.copyfileobj(response, out, 1 << 20)
             os.replace(part, path)
             return
         except (urllib.error.URLError, OSError):
