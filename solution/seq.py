@@ -38,6 +38,10 @@ WINDOWS = (12, 25, 50, 100)
 CAP = 250                 # frames: "no touch for 10 s" is as far as the touch clock counts
 TRAIN_STEP = 5
 SEED = 0
+# Ball-touch features (touchfeat.py) appended to the window features: variant "touch". They are
+# blanked (NaN) on any match whose feat dict carries event_ball -- Metrica's sample matches, whose
+# ball is drawn from the same events their labels are rebuilt from.
+TOUCH = variant.has("touch")
 MODEL_PATH = variant.cache_path(os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache", "seq_model.pkl"))
 
@@ -97,7 +101,13 @@ def features(feat):
     cols += [h_since, h_until, a_since, a_until, h_since - a_since, h_until - a_until]
     flips = np.r_[0.0, (nearest[1:] * nearest[:-1] < 0).astype(float)]
     cols += [centred_mean(flips, 25) * 51, centred_mean(flips, 50) * 101]
-    return np.column_stack(cols).astype(np.float32)
+    x = np.column_stack(cols).astype(np.float32)
+    if TOUCH:
+        touch = np.asarray(feat["touch"], dtype=np.float32)
+        if feat.get("event_ball"):
+            touch = np.full_like(touch, np.nan)
+        x = np.hstack([x, touch])
+    return x
 
 
 def context_features(x, team, dead):

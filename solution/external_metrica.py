@@ -235,9 +235,45 @@ def convert(match):
     return out
 
 
+# Variant "metatd": Metrica's sample ball made to look like our ATD before anything reads it. The
+# sample ball is drawn from the events (it sits a median 0.2-0.3 m from the nearest player in play
+# in games 1-2, moves in straight lines -- frame-to-frame velocity change 0.03 m/s -- and 99% of
+# its sharp turns in play fall within 2 frames of an event), while ours is a smoothed automatic
+# track (0.3 m/s, 1.8 m). Blurred by ATD_BLUR frames, offset by slow noise of ATD_SLOW m and a
+# little jitter, it matches BAR-ATH's in-play speed, velocity change and ball-to-player distance
+# (domain_check.py). Seeded per match, so the same arrays every run.
+ATD_BLUR = 3.0            # frames
+ATD_SLOW = 1.15           # m, smoothed over ATD_SLOW_SMOOTH frames
+ATD_SLOW_SMOOTH = 12
+ATD_JITTER = 0.01         # m, smoothed over 1.5 frames
+
+
+def atd_like(ball, seed):
+    """Copy of ball blurred and offset like our ATD (variant "metatd"); NaN stays NaN."""
+    from scipy.ndimage import gaussian_filter1d
+    rng = np.random.default_rng(seed)
+    out = ball.copy()
+    seen = np.isfinite(ball[:, 0])
+    den = gaussian_filter1d(seen.astype(float), ATD_BLUR, mode="nearest")
+    for k in (0, 1):
+        num = gaussian_filter1d(np.where(seen, ball[:, k], 0.0).astype(float), ATD_BLUR,
+                                mode="nearest")
+        with np.errstate(invalid="ignore", divide="ignore"):
+            out[:, k] = num / den
+    for sd, smooth in ((ATD_SLOW, ATD_SLOW_SMOOTH), (ATD_JITTER, 1.5)):
+        z = gaussian_filter1d(rng.normal(0, 1, (len(ball), 2)), smooth, axis=0, mode="nearest")
+        out[:, :2] += (z * (sd / z.std(axis=0))).astype(out.dtype)
+    out[~seen, :2] = np.nan
+    return out
+
+
 def load_match(match):
+    import variant
     d = np.load(convert(match))
-    return d["ball"], d["players"], d["team"], d["labels"], [tuple(b) for b in d["blocks"]]
+    ball = d["ball"]
+    if variant.has("metatd"):
+        ball = atd_like(ball, MATCHES.index(match))
+    return ball, d["players"], d["team"], d["labels"], [tuple(b) for b in d["blocks"]]
 
 
 def refine(labels, ball, players, team, reach=REFINE_REACH, max_back=REFINE_MAX_BACK):
@@ -287,6 +323,9 @@ def seq_training_set():
             model.dead_ml_log_lr(feat)
             model.team_ml_log_odds(feat)
             model.ballfinder_log_odds(feat)
+            feat["event_ball"] = True      # the ball is drawn from the events (seq.TOUCH blanks it)
+            if seq.TOUCH:
+                model.touch_features(feat)
         finally:
             loader.OVERRIDE, model.BLOCKS = None, None
         xs.append(seq.features(feat))

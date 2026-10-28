@@ -95,6 +95,15 @@ PARAMS = {
     # the ball is dead before each half's kickoff (games.py anchors), up to this many frames
     # before it -- the last second is left to the evidence. None = off.
     "kickoff_margin": 25,
+    # per-frame relief of the H <-> A cost (0 = off, the submission): from ball actions spotted on
+    # the broadcast video (video_events.py; feat["video_events"], else cache/video_events.csv), and
+    # from a change detector's log-odds (feat["change_logodds"]). Never below the *_min cost.
+    "k_video": 0.0,
+    "video_min": 2.0,
+    "k_video_team": 0.0,      # team log-odds per frame around a video event (video_events.py)
+    "video_hold": 0,          # frames a video touch's team evidence is carried towards the next
+    "k_change": 0.0,
+    "change_min": 2.0,
 }
 STATES = np.array(["H", "A", "D"])
 # Set to [(first, last), ...] to run on a match other than BAR-ATH (see dfl_eval.py).
@@ -228,6 +237,10 @@ def emissions(feat, p, mask, events, form=None):
     tag_team, tag_dead = tag_evidence(len(team), events, p)
     team += tag_team
     dead += tag_dead
+    if p.get("k_video_team", 0.0) > 0:
+        import video_events
+        team = team + video_events.team_evidence(len(team), video_events_of(feat),
+                                                 p["k_video_team"], hold=int(p["video_hold"]))
 
     # log P(H|alive) and log P(A|alive): their difference is the team log-odds, and they sum to
     # P(alive) = 1, so team evidence -- however strong -- never tips a frame between alive and dead.
@@ -288,7 +301,25 @@ def switch_costs(feat, p):
         near = touches.near(side.astype(np.int8), 1, w)
         out.append(np.where(near, p["switch_contact"], np.where(seen, p["switch_quiet"],
                                                                  p["switch"])))
+    if p.get("k_video", 0.0) > 0:
+        import video_events
+        relief = video_events.switch_relief(len(out[0]), video_events_of(feat), p["k_video"])
+        out = [np.maximum(c - r, np.minimum(c, p["video_min"])) for c, r in zip(out, relief)]
+    if p.get("k_change", 0.0) > 0:
+        relief = p["k_change"] * np.clip(change_log_odds(feat), 0.0, None)
+        out = [np.maximum(c - relief, np.minimum(c, p["change_min"])) for c in out]
     return out
+
+
+def video_events_of(feat):
+    """Video events for this match: feat["video_events"] (benches, simulated), else BAR-ATH's
+    cached file (video_events.py build)."""
+    if "video_events" not in feat:
+        if BLOCKS is not None:
+            raise ValueError("k_video > 0 off BAR-ATH needs feat['video_events']")
+        import video_events
+        feat["video_events"] = video_events.load()
+    return feat["video_events"]
 
 
 def decode(emit, p, feat=None, final=False):
@@ -310,7 +341,8 @@ def decode(emit, p, feat=None, final=False):
             labels[a:b] = STATES[path]
         return labels
     varying = feat is not None and (p["switch_contact"] != p["switch"]
-                                    or p["switch_quiet"] != p["switch"])
+                                    or p["switch_quiet"] != p["switch"]
+                                    or p.get("k_video", 0.0) > 0 or p.get("k_change", 0.0) > 0)
     to_away, to_home = switch_costs(feat, p) if varying else (None, None)
     for first, last in blocks():
         seg = slice(first, last + 1)
@@ -411,6 +443,15 @@ def team_ml_log_odds(feat):
     return feat["team_ml"]
 
 
+def touch_features(feat):
+    """Ball-touch features (touchfeat.py) per frame, cached in `feat`."""
+    if "touch" not in feat:
+        import touchfeat
+        ball, players, team = load()
+        feat["touch"] = touchfeat.compute(ball, players, team)
+    return feat["touch"]
+
+
 def seq_log_odds(feat):
     """Second-stage (team, dead) log-odds per frame, cached in `feat` (dfl_eval fills them per
     match). Needs the first-stage evidence, so it fills that first."""
@@ -418,18 +459,36 @@ def seq_log_odds(feat):
         dead_ml_log_lr(feat)
         team_ml_log_odds(feat)
         ballfinder_log_odds(feat)
+        if seq.TOUCH:
+            touch_features(feat)
         team, dead = seq.log_odds(seq.trained(dfl_eval_training_set), seq.features(feat))
         feat["seq_team"], feat["seq_dead"] = np.where(graded_mask(len(team)), team, 0.0), dead
     return feat["seq_team"], feat["seq_dead"]
 
 
 def dfl_eval_training_set():
-    """The second stage learns from the DFL matches and Metrica's sample matches together."""
+    """The second stage learns from the DFL matches and Metrica's sample matches together (and
+    the change detector, change_ml.py, from the same rows)."""
     import dfl_eval
     import external_metrica
     xs, labels = dfl_eval.seq_training_set()
     more_xs, more_labels = external_metrica.seq_training_set()
     return xs + more_xs, labels + more_labels
+
+
+def change_log_odds(feat):
+    """Change-detector log-odds per frame (change_ml.py), cached in `feat`; benches fill it
+    leave-one-match-out themselves."""
+    if "change_logodds" not in feat:
+        import change_ml
+        dead_ml_log_lr(feat)
+        team_ml_log_odds(feat)
+        ballfinder_log_odds(feat)
+        if seq.TOUCH:
+            touch_features(feat)
+        z = change_ml.log_odds(change_ml.trained(dfl_eval_training_set), seq.features(feat))
+        feat["change_logodds"] = np.where(graded_mask(len(z)), z, 0.0)
+    return feat["change_logodds"]
 
 
 def ballfinder_log_odds(feat):

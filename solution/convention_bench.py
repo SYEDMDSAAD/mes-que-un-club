@@ -50,6 +50,8 @@ def dfl_first_stage():
         try:
             feat.update(compute())
             model.ballfinder_log_odds(feat)
+            if seq.TOUCH:
+                model.touch_features(feat)
         finally:
             loader.OVERRIDE, model.BLOCKS = None, None
     with open(CACHE, "wb") as handle:
@@ -64,6 +66,8 @@ def main():
     model.dead_ml_log_lr(feat_bar)
     model.team_ml_log_odds(feat_bar)
     model.ballfinder_log_odds(feat_bar)
+    if seq.TOUCH:
+        model.touch_features(feat_bar)
     x_bar = seq.features(feat_bar)
     graded = model.graded_mask(len(x_bar))
     gt = pm.label_codes(pm.read_label_csv(experiment.GT))

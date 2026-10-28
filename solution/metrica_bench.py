@@ -68,6 +68,9 @@ def metrica_first_stage():
             model.dead_ml_log_lr(feat)
             model.team_ml_log_odds(feat)
             model.ballfinder_log_odds(feat)
+            feat["event_ball"] = True      # the ball is drawn from the events (seq.TOUCH blanks it)
+            if seq.TOUCH:
+                model.touch_features(feat)
         finally:
             loader.OVERRIDE, model.BLOCKS = None, None
         data[m] = (ball, players, team, truth, blocks, feat)
@@ -105,6 +108,8 @@ def main():
     model.dead_ml_log_lr(feat_bar)
     model.team_ml_log_odds(feat_bar)
     model.ballfinder_log_odds(feat_bar)
+    if seq.TOUCH:
+        model.touch_features(feat_bar)
     x_bar = seq.features(feat_bar)
     graded = model.graded_mask(len(x_bar))
     gt = pm.label_codes(pm.read_label_csv(experiment.GT))

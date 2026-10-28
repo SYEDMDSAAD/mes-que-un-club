@@ -8,11 +8,34 @@ its own models and the submission's stay untouched. Variants read TAG to switch 
 
     state   dfl_eval.degrade damages DFL the way BAR-ATH's tracking actually loses the ball --
             mostly in stoppages -- with slow ball noise instead of independent noise per frame
+    taper   the dead-ball drift fades in and out over ~1 s instead of switching on and off in one
+            frame (which made a median 44 m/s jump at every stoppage edge of the training ball)
+    smoothS the clean DFL ball blurred by a Gaussian of S frames before it is damaged, so its
+            kinks are as soft as our ATD's (smooth2, smooth3, ...)
+    metatd  Metrica's sample ball (drawn from its events) blurred and offset to look like our
+            ATD before anything reads it, for training and for the Metrica bench alike
+    touch   ball-touch features (touchfeat.py) in the second stage, blanked on Metrica's rows
+
+Parts combine with "+": MQUC_VARIANT=touch+taper+smooth2+metatd.
 """
 
 import os
 
 TAG = os.environ.get("MQUC_VARIANT", "").strip()
+PARTS = [part for part in TAG.split("+") if part]
+
+
+def has(name):
+    """True when the variant includes this part."""
+    return name in PARTS
+
+
+def value(prefix, default):
+    """The number after `prefix` in a part (smooth2 -> 2.0), or default."""
+    for part in PARTS:
+        if part.startswith(prefix) and part[len(prefix):].replace(".", "", 1).isdigit():
+            return float(part[len(prefix):])
+    return default
 
 
 def cache_path(path):

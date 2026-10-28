@@ -61,14 +61,22 @@ RANDOM_PLAYER_DROP = (0.03, 0.12)
 #   "v12": independent 0.3 m noise per frame. "noise": slow noise without the drift.
 #   "state": the ball goes missing mostly in stoppages, at MISS_* rates and GAP_* means
 #       (domain_check.py measures them; "state40" uses the public window's rates).
-DEGRADE_MODE = ("state" if variant.TAG.startswith("state")
-                else variant.TAG if variant.TAG in ("v12", "noise") else "drift")
+DEGRADE_MODE = ("state" if any(part.startswith("state") for part in variant.PARTS)
+                else "v12" if variant.has("v12") else "noise" if variant.has("noise") else "drift")
 DEAD_DRIFT = 1.5          # m, slow noise added on dead frames only ("drift")
+# Variant "taper": the drift fades in and out with a Gaussian of this many frames around each
+# stoppage edge. 0 (v13) switches it on and off in one frame: a median 44 m/s jump of the training
+# ball at every edge, a fake kick no BAR-ATH stoppage has.
+DRIFT_TAPER = 12 if variant.has("taper") else 0
+# Variant "smoothS": the clean ball blurred by a Gaussian of S frames before it is damaged. Our ATD
+# ball changes velocity by a median 0.3 m/s per frame, clean TRACAB by 0.6-0.8: its kinks are
+# sharper than ours. Match "dv live" and the "turn" rows of domain_check.py --more.
+BALL_SMOOTH = variant.value("smooth", 0.0)
 MISS_LIVE = 0.074         # share of live frames without a ball
 MISS_DEAD = 0.68          # share of dead frames without a ball
 GAP_LIVE = 30             # mean missing run inside live play, frames
 GAP_DEAD = 200            # mean missing run inside a stoppage, frames
-if variant.TAG == "state40":
+if variant.has("state40"):
     MISS_LIVE, MISS_DEAD, GAP_LIVE, GAP_DEAD = 0.06, 0.40, 70, 260
 BALL_NOISE_SMOOTH = 12    # frames: Gaussian smoothing of the slow ball noise (state mode)
 
@@ -100,6 +108,19 @@ def state_seen(labels, rng):
             t += length
             missing = not missing
     return seen
+
+
+def blur_runs(ball, sigma):
+    """ball with x, y blurred by a Gaussian of sigma frames inside each run of finite values."""
+    from scipy.ndimage import gaussian_filter1d
+    out = ball.copy()
+    seen = np.isfinite(ball[:, 0])
+    den = gaussian_filter1d(seen.astype(float), sigma, mode="nearest")
+    for k in (0, 1):
+        num = gaussian_filter1d(np.where(seen, ball[:, k], 0.0).astype(float), sigma, mode="nearest")
+        with np.errstate(invalid="ignore", divide="ignore"):
+            out[:, k] = np.where(seen, num / den, np.nan)
+    return out
 
 
 def slow_noise(rng, n, sigma, smooth):
@@ -161,7 +182,7 @@ def degrade(ball, players, blocks, seed=SEED, randomize=False, truth=None):
     finally:
         loader.OVERRIDE = saved
     our_blocks = [(first, last) for _, first, last in model.half_video_blocks(model.GAME)]
-    ball = ball.copy()
+    ball = blur_runs(ball, BALL_SMOOTH) if BALL_SMOOTH > 0 else ball.copy()
     for (first, last), (o_first, o_last) in zip(blocks, our_blocks):
         n = last - first + 1
         seen = np.isfinite(ours[o_first:o_last + 1, 0])
@@ -174,7 +195,11 @@ def degrade(ball, players, blocks, seed=SEED, randomize=False, truth=None):
             if truth is None:
                 raise ValueError("degrade in 'drift' mode needs the match's labels (truth=...)")
             drift = slow_noise(rng, len(ball), DEAD_DRIFT, BALL_NOISE_SMOOTH)
-            ball[:, :2] += (drift * (np.asarray(truth) == "D")[:, None]).astype(ball.dtype)
+            dead = np.asarray(truth) == "D"
+            if DRIFT_TAPER > 0:
+                from scipy.ndimage import gaussian_filter1d
+                dead = gaussian_filter1d(dead.astype(float), DRIFT_TAPER, mode="nearest")
+            ball[:, :2] += (drift * dead[:, None]).astype(ball.dtype)
     elif ball_noise:
         ball[:, :2] += rng.normal(0, ball_noise, ball[:, :2].shape)
 
@@ -288,6 +313,8 @@ def seq_training_set():
         try:
             feat.update(model.compute())
             model.ballfinder_log_odds(feat)
+            if seq.TOUCH:
+                model.touch_features(feat)
         finally:
             loader.OVERRIDE = None
             model.BLOCKS = None

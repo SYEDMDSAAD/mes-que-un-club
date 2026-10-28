@@ -41,7 +41,11 @@ No video is decoded. Everything derived from the data goes to `cache/`, which is
 | `external_dfl.py` | downloads and converts the DFL open data |
 | `external_metrica.py` | downloads and converts Metrica's sample matches, rebuilds possession labels from their events |
 | `mbr.py` | optional final decoder for expected spellF1 (posterior samples, block-wise choice among candidate paths); off while `PARAMS["mbr_tau"]` is 0 |
-| `variant.py` | `MQUC_VARIANT=<tag>` runs an experimental variant with its own cached models (`state`: state-aware DFL damage in `dfl_eval.degrade`); unset = the submission |
+| `variant.py` | `MQUC_VARIANT=<tag>` runs an experimental variant with its own cached models (`state`, `taper`, `smoothS`, combined with `+`); unset = the submission |
+| `touchfeat.py` | ball-touch features for the second stage (multi-scale impulse, attribution to a team, touch events, control); variant `touch`, blanked on Metrica's rows |
+| `change_ml.py` | "H <-> A change within +-3 frames" detector on the second stage's rows; its log-odds relieve the H <-> A cost (`PARAMS["k_change"]`, 0 = off) |
+| `video_events.py` | T-DEED ball actions from the broadcast video moved onto the tactical timeline, team-attributed, hashed; decoder relief of the H <-> A cost (`PARAMS["k_video"]`, 0 = off); `pseudo_events()` simulates them on labelled matches for tuning |
+| `video/tdeed_infer.py` | runs T-DEED on the broadcast video reproducibly (decoded-frame check, no worker duplication, fp32, rounded scores); separate environment, `video/requirements-tdeed.txt` |
 
 ### Evaluation tools (not needed to reproduce)
 
@@ -59,7 +63,9 @@ No video is decoded. Everything derived from the data goes to `cache/`, which is
 | `convention.py`, `convention_bench.py` | DFL labels rewritten to "controlled possession" (tried, dropped) |
 | `video/ball_detector.py`, `video_value.py` | ball detector on the tactical video, GPU (tried, left out; see TECHNICAL.md) |
 | `mbr_bench.py [--bar-ath]` | expected-spellF1 decoding vs Viterbi on the 7 DFL + 3 Metrica matches (v11 second stage, leave-one-match-out), with calibration columns |
-| `domain_check.py [--labels file]` | ball-missing rates by state, gap lengths, ball speed / jerk, ball-to-player distance: BAR-ATH vs clean and damaged DFL vs Metrica |
+| `domain_check.py [--labels file] [--more]` | ball-missing rates by state, gap lengths, ball speed / jerk, ball-to-player distance; with `--more` kink shape at 2 / 4 / 8 frames, interpolation, kick distance, out-of-bounds handling, players, and the labels' possession statistics: BAR-ATH vs clean and damaged DFL vs Metrica |
+| `ceiling_bench.py` | oracle ceilings on the cached bench emissions: perfect dead / team evidence, perfect change times, perfect boundaries, perfect short possessions -- where the remaining spellF1 is |
+| `touch_bench.py [--bar-ath]` | second stage and change detector leave-one-match-out on the 7 DFL + 3 Metrica matches, decoded at several `k_change`; run with and without `MQUC_VARIANT=touch...` |
 | `broadcast_check.py` | does the broadcast tracking get the nearest team right where the tactical one is wrong? (public window) |
 
 The approach, the assets used and dropped, the possession rules and the limitations are in
