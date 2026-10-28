@@ -326,6 +326,8 @@ def seq_training_set():
             feat["event_ball"] = True      # the ball is drawn from the events (seq.TOUCH blanks it)
             if seq.TOUCH:
                 model.touch_features(feat)
+            if seq.MOTION:
+                model.motion_ml_log_odds(feat)
         finally:
             loader.OVERRIDE, model.BLOCKS = None, None
         xs.append(seq.features(feat))

@@ -39,6 +39,14 @@ different in training and in the submission.
     spells      possessions per minute of play, share shorter than 1 / 2 / 5 s, stoppages per
                 graded minute: the labels' convention -- yours on BAR-ATH (--labels) against
                 each labelled source and the public window
+    near right  share of in-play frames with a ball where the nearest player's team is the team
+                in possession, overall and when that player is within 1.5 m: how often the ball
+                is on the wrong team. BAR-ATH's public window against damaged DFL calibrates
+                variant "wrongball" (on BAR-ATH only the public window has true labels)
+    drop len    mean length, in frames, of a player's missing stretch: with track births a
+                minute it calibrates variant "droplen"
+    v1s dead    1-s mean ball speed on dead frames with a ball, p50 / p90 (the dead model and
+                the second stage read it)
 
     python solution/domain_check.py [--labels "Mes Que Un Club.csv"] [--more]
 """
@@ -128,7 +136,7 @@ def show(name, s):
               f(s["dv live"])), flush=True)
 
 
-def more_stats(ball, players, labels, blocks):
+def more_stats(ball, players, labels, blocks, team=None):
     """The --more line: kink shape at several scales, interpolation, lag, players, spells."""
     n = len(ball)
     graded = np.zeros(n, bool)
@@ -190,6 +198,28 @@ def more_stats(ball, players, labels, blocks):
                           float(births / max(minutes, 1e-9))]
     out["speed live"] = pct(sp[live].ravel(), (50, 90))
     out["speed dead"] = pct(sp[dead].ravel(), (50, 90))
+    runs_len = []
+    for k in range(players.shape[1]):
+        miss = graded & ~present[:, k]
+        if present[graded, k].any():                 # a slot that is used in this stretch
+            lo, hi = runs(miss)
+            inner = (lo > 0) & (hi < n)
+            runs_len += (hi - lo)[inner].tolist()
+    out["drop len"] = float(np.mean(runs_len)) if runs_len else np.nan
+    v1 = np.hypot(*np.vstack([np.r_[np.nan, np.diff(b[:, 0])], np.r_[np.nan, np.diff(b[:, 1])]])) * FPS
+    from features import rolling_mean
+    out["v1s dead"] = pct(rolling_mean(np.clip(v1, 0, 40), FPS // 2)[dead & seen], (50, 90))
+    if team is not None:
+        team = np.asarray(team)
+        dh = np.min(np.where((team == 0)[None, :], d, np.inf), axis=1)
+        da = np.min(np.where((team == 1)[None, :], d, np.inf), axis=1)
+        ok = live & seen & np.isfinite(dh) & np.isfinite(da)
+        right = (dh < da) == (lab == "H")
+        close = ok & (np.fmin(dh, da) < 1.5)
+        out["near right"] = [float(right[ok].mean()) if ok.any() else np.nan,
+                             float(right[close].mean()) if close.any() else np.nan]
+    else:
+        out["near right"] = [np.nan, np.nan]
 
     spells, stops = [], 0
     for first, last in blocks:
@@ -213,36 +243,38 @@ def show_more(name, s):
     def f(v, fmt="{:.2f}"):
         return "/".join(fmt.format(a) for a in v) if isinstance(v, list) else fmt.format(v)
     print("{:<26} turn2 {}  turn4 {}  turn8 {}  impulse4 {}  acf|dv| {}  kick near {}  "
-          "out {}  players {}  speed live {}  dead {}  spells/min, <1/2/5 s, stops/min {}".format(
+          "out {}  players {}  speed live {}  dead {}  spells/min, <1/2/5 s, stops/min {}  "
+          "near right {}  drop len {}  v1s dead {}".format(
               name, f(s["turn 2"]), f(s["turn 4"]), f(s["turn 8"]), f(s["impulse4"], "{:.1f}"),
               f(s["acf|dv|"]), f(s["kick near"]), f(s["out"], "{:.3f}"),
               f(s["players"], "{:.1f}"), f(s["speed live"], "{:.1f}"),
-              f(s["speed dead"], "{:.1f}"), f(s["spells"])), flush=True)
+              f(s["speed dead"], "{:.1f}"), f(s["spells"]), f(s["near right"], "{:.3f}"),
+              f(s["drop len"], "{:.0f}"), f(s["v1s dead"], "{:.2f}")), flush=True)
 
 
 def main(labels_path=None, more=False):
-    ball, players, _ = load()
+    ball, players, our_team = load()
     blocks = [(first, last) for _, first, last in half_video_blocks(GAME)]
     public = pd.read_csv(GT)["label"].values
     idx = np.flatnonzero(public != "X")
-    def both(name, b, p, labels, bl):
+    def both(name, b, p, labels, bl, team=None):
         show(name, stats(b, p, labels, bl))
         if more:
-            show_more(name, more_stats(b, p, labels, bl))
+            show_more(name, more_stats(b, p, labels, bl, team))
 
-    both("BAR-ATH public window", ball, players, public, [(idx[0], idx[-1])])
+    both("BAR-ATH public window", ball, players, public, [(idx[0], idx[-1])], our_team)
     if labels_path:
         mine = pd.read_csv(labels_path)["label"].astype(str).values
         both("BAR-ATH full, our labels", ball, players, mine, blocks)
 
     for m in dfl_eval.cached_matches():
-        b, p, _, truth, bl = load_dfl(m)
-        both("DFL {} clean".format(m), b, p, truth, bl)
-        d_b, d_p = dfl_eval.degrade(b, p, bl, truth=truth)
-        both("DFL {} damaged".format(m), d_b, d_p, truth, bl)
+        b, p, tm, truth, bl = load_dfl(m)
+        both("DFL {} clean".format(m), b, p, truth, bl, tm)
+        d_b, d_p = dfl_eval.degrade(b, p, bl, truth=truth, team=tm)
+        both("DFL {} damaged".format(m), d_b, d_p, truth, bl, tm)
     for m in external_metrica.MATCHES:
-        b, p, _, truth, bl = external_metrica.load_match(m)
-        both("Metrica {}".format(m), b, p, truth, bl)
+        b, p, tm, truth, bl = external_metrica.load_match(m)
+        both("Metrica {}".format(m), b, p, truth, bl, tm)
 
 
 if __name__ == "__main__":

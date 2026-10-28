@@ -44,7 +44,7 @@ def dfl_first_stage():
     if os.path.isfile(CACHE):
         with open(CACHE, "rb") as handle:
             return pickle.load(handle)
-    data = dfl_eval.prepare(dead_ml=True, team_ml=True)
+    data = dfl_eval.prepare(dead_ml=True, team_ml=True, motion_ml=seq.MOTION)
     for ball, players, team, _, blocks, feat in data.values():
         loader.OVERRIDE, model.BLOCKS = (ball, players, team), blocks
         try:
@@ -68,6 +68,8 @@ def main():
     model.ballfinder_log_odds(feat_bar)
     if seq.TOUCH:
         model.touch_features(feat_bar)
+    if seq.MOTION:
+        model.motion_ml_log_odds(feat_bar)
     x_bar = seq.features(feat_bar)
     graded = model.graded_mask(len(x_bar))
     gt = pm.label_codes(pm.read_label_csv(experiment.GT))

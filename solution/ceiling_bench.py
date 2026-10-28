@@ -16,6 +16,13 @@ as model.predict builds it):
                          frames written in from the truth: the ceiling of catching the scrambles
     perfect team + dead  both evidence oracles: what is left is the decoder's own costs
 
+and, splitting "perfect team" by where the evidence goes wrong (from the first-stage caches):
+
+    team: ball missing   the truth's team only on in-play frames without a ball
+    team: nearest wrong  only on frames with a ball whose nearest player is on the wrong team --
+                         the tracking errors no ball-based model can see through
+    team: short poss.    only inside true possessions shorter than SHORT frames
+
 Read the gaps to the first row, not the levels. A big gap means that lever has room; a small one
 means even perfect evidence of that kind would not move the score -- whatever it does on the
 public window. F1 at IoU 0.3 and 0.7 are printed too: a lever that lifts 0.7 much more than 0.3
@@ -142,8 +149,15 @@ def boundaries_to_runs(path):
     return [(int(s), int(e), int(path[s])) for s, e in zip(starts, stops)]
 
 
-def variants(truth_half, emit_half):
-    """{name: decoded path} for one half."""
+def team_where(emit_half, truth_half, mask):
+    """Emissions with the team evidence replaced by the truth on mask only."""
+    team = team_of(emit_half)
+    team[mask] = np.where(truth_half[mask] == H, M, -M)
+    return with_team(emit_half, team)
+
+
+def variants(truth_half, emit_half, flags_half=None):
+    """{name: decoded path} for one half. flags_half: (ball seen, nearest player home) or None."""
     t = truth_half
     out = {"pipeline": viterbi_half(emit_half)}
     dead = np.where(t == D, M, -M)
@@ -158,29 +172,58 @@ def variants(truth_half, emit_half):
     both = with_team(emit_half, team)
     both[:, D] = dead
     out["perfect team + dead"] = viterbi_half(both)
+    live = t != D
+    if flags_half is not None:
+        seen, near_home = flags_half
+        out["team: ball missing"] = viterbi_half(team_where(emit_half, t, live & ~seen))
+        wrong = live & seen & (near_home != (t == H))
+        out["team: nearest wrong"] = viterbi_half(team_where(emit_half, t, wrong))
+    short = np.zeros(len(t), bool)
+    for s0, e0, lab in boundaries_to_runs(t):
+        if lab != D and e0 - s0 < SHORT:
+            short[s0:e0] = True
+    out["team: short poss."] = viterbi_half(team_where(emit_half, t, short))
     return out
 
 
-def evaluate(truth, blocks, emit):
-    """{name: pm.evaluate result} for one match."""
+def evaluate(truth, blocks, emit, flags=None):
+    """{name: pm.evaluate result} for one match. flags: (ball seen, nearest home) arrays or None."""
     per = {}
     for first, last in blocks:
         t = codes(truth, first, last)
-        for name, path in variants(t, emit[first:last + 1]).items():
+        fl = None if flags is None else tuple(f[first:last + 1] for f in flags)
+        for name, path in variants(t, emit[first:last + 1], fl).items():
             per.setdefault(name, []).append(path)
     return {name: pm.evaluate(pm.label_codes(truth),
                               pm.label_codes(labels_of(paths, blocks, len(truth))), bootstrap_n=0)
             for name, paths in per.items()}
 
 
-def main(data=None):
+def first_stage_flags():
+    """{(source, match): (ball seen, nearest player home)} from the cached first stages."""
+    from convention_bench import dfl_first_stage
+    from metrica_bench import metrica_first_stage
+    out = {}
+    for source, stage in (("dfl", dfl_first_stage), ("metrica", metrica_first_stage)):
+        for m, value in stage().items():
+            feat = value[5]
+            with np.errstate(invalid="ignore"):
+                out[(source, m)] = (np.asarray(feat["ball_seen"], bool),
+                                    np.asarray(feat["d_home"] < feat["d_away"]))
+    return out
+
+
+def main(data=None, flags=None):
     if data is None:
         import mbr_bench
         data = mbr_bench.prepared()
+        flags = first_stage_flags()
     results = {}
     for key, (truth, blocks, emit) in data.items():
-        results[key] = evaluate(truth, blocks, emit)
-    names = list(next(iter(results.values())))
+        results[key] = evaluate(truth, blocks, emit, None if flags is None else flags.get(key))
+    names = []
+    for r in results.values():
+        names += [k for k in r if k not in names]
     sources = sorted({k[0] for k in results})
     print("{:<22}".format("") + "".join(
         "| {:<52}".format("{} ({} matches): spellF1  gain  F1@0.3  F1@0.7  p/t".format(
@@ -188,7 +231,10 @@ def main(data=None):
     for name in names:
         line = "{:<22}".format(name)
         for s in sources:
-            rows = [r for k, r in results.items() if k[0] == s]
+            rows = [r for k, r in results.items() if k[0] == s and name in r]
+            if not rows:
+                line += "| {:<52}".format("-")
+                continue
             f = np.mean([r[name]["spell_f1_mean"] for r in rows])
             base = np.mean([r["pipeline"]["spell_f1_mean"] for r in rows])
             lo = np.mean([r[name]["spell_f1"][0.3]["f1"] for r in rows])

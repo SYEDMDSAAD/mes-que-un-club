@@ -120,7 +120,7 @@ def dfl_training_set():
     xs, labels = [], []
     for m in sorted(ids):
         ball, players, team, truth, blocks = load_match(m)
-        for d_ball, d_players in dfl_eval.training_copies(ball, players, blocks, truth):
+        for d_ball, d_players in dfl_eval.training_copies(ball, players, blocks, truth, team):
             xs.append(features(d_ball, d_players, team, blocks))
             labels.append(truth)
     return xs, labels

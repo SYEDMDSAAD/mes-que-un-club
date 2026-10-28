@@ -144,6 +144,8 @@ def tdeed_batches(args, n_sampled):
         family = args.model.split("_")[0]
         cfg = load_json(os.path.join("config", family, args.model + ".json"))
         targs = SimpleNamespace(**cfg)
+        if args.batch:
+            targs.batch_size = args.batch          # a 4 GB laptop GPU needs 1 for challenge2
         targs.crop_dim = cfg["crop_dim"] if cfg["crop_dim"] > 0 else None
         targs.pretrain = cfg.get("pretrain")
         classes = load_classes(os.path.join("data", cfg["dataset"], "class.txt"))
@@ -196,6 +198,9 @@ def main(argv=None):
     parser.add_argument("--model", default="SoccerNetBall_challenge2")
     parser.add_argument("--device", default="cuda", choices=("cuda", "cpu"))
     parser.add_argument("--threads", type=int, default=4, help="CPU threads (cpu only)")
+    parser.add_argument("--batch", type=int, default=0,
+                        help="clips per batch (default: the checkpoint's config); record it -- "
+                             "the batch size is part of what makes a rerun write the same bytes")
     parser.add_argument("--expected-frames", type=int, default=EXPECTED_FRAMES)
     args = parser.parse_args(argv)
 

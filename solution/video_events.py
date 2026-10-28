@@ -310,6 +310,27 @@ def check(path=CSV):
         print("public window: PASS / DRIVE events whose team is the possessing team: {:.0%} "
               "of {}".format(np.mean([(gt[t] == "H") == (tm == 0) for t, tm in inside]),
                              len(inside)))
+    delays = []
+    for i in changes:
+        new = 0 if gt[i] == "H" else 1
+        after = frames[(teams == new) & (frames >= i - 6) & (frames <= i + 50)]
+        if len(after):
+            delays.append(int(after.min() - i))
+    if delays:
+        print("public window: first event of the new team after a change: median {:+.0f} frames, "
+              "max {:+d} ({} of {} changes)".format(np.median(delays), max(delays), len(delays),
+                                                    len(changes)))
+    live = np.isin(gt, ["H", "A"])
+    lone = [t for t, tm in zip(frames, teams)
+            if live[t] and not any(abs(t - i) <= 25 for i in changes) and tm >= 0
+            and (gt[t] == "H") != (tm == 0)]
+    minutes = live.sum() / FPS / 60
+    print("public window: events by the team without the ball, away from any change: {:.1f} a "
+          "minute of play (false events or wrong team: pseudo_events' fp_per_min and "
+          "team_error)".format(len(lone) / max(minutes, 1e-9)))
+    print("-> pseudo_events(recall=<hits at +-12 / changes>, jitter=<IQR / 1.35 of the kick "
+          "offset>, team_error=<1 - PASS/DRIVE share>, fp_per_min=<the rate above>, "
+          "delay=<median delay, at least 0>)")
 
 
 if __name__ == "__main__":

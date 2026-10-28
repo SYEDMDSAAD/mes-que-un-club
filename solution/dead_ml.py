@@ -141,8 +141,8 @@ def dfl_training_set():
         convert(m, files)
     xs, ys = [], []
     for m in sorted(ids):
-        ball, players, _, truth, blocks = load_match(m)
-        for d_ball, d_players in dfl_eval.training_copies(ball, players, blocks, truth):
+        ball, players, team, truth, blocks = load_match(m)
+        for d_ball, d_players in dfl_eval.training_copies(ball, players, blocks, truth, team):
             xs.append(features(d_ball, d_players, blocks))
             ys.append(truth == "D")
     return xs, ys

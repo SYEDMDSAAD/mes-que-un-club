@@ -15,8 +15,14 @@ its own models and the submission's stay untouched. Variants read TAG to switch 
     metatd  Metrica's sample ball (drawn from its events) blurred and offset to look like our
             ATD before anything reads it, for training and for the Metrica bench alike
     touch   ball-touch features (touchfeat.py) in the second stage, blanked on Metrica's rows
+    touchblurS  the touch features of training and bench matches computed from their ball
+            blurred by S frames; every other model keeps the v13 training ball
+    droplenS   player dropouts S frames long (v13: 50, ~46 track births a minute; ours 6-11)
+    wrongballR R stretches a minute of play where the training ball sits on a player of the team
+            without it, as our tracker does
+    motion  the ball-blind, player-only possession model (motion_ml.py) in the second stage
 
-Parts combine with "+": MQUC_VARIANT=touch+taper+smooth2+metatd.
+Parts combine with "+": MQUC_VARIANT=motion+wrongball3+droplen250.
 """
 
 import os

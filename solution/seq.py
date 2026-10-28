@@ -42,6 +42,14 @@ SEED = 0
 # blanked (NaN) on any match whose feat dict carries event_ball -- Metrica's sample matches, whose
 # ball is drawn from the same events their labels are rebuilt from.
 TOUCH = variant.has("touch")
+# Variant "touchblurS": on the training and bench matches (not BAR-ATH) the touch features are
+# computed from a copy of their ball blurred by a Gaussian of S frames, so their kinks look like
+# our ATD's (impulse p90 / p99, turn, kick distance in domain_check.py --more), while every other
+# model keeps the v13 training ball -- blurring that one cost BAR-ATH 0.03-0.04 macroF1.
+TOUCH_BLUR = variant.value("touchblur", 0.0)
+# Variant "motion": the ball-blind, player-only possession model (motion_ml.py) as one more signal,
+# with the same offsets and window means as the others.
+MOTION = variant.has("motion")
 MODEL_PATH = variant.cache_path(os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache", "seq_model.pkl"))
 
@@ -89,6 +97,8 @@ def features(feat):
         "ball_v": np.clip(np.nan_to_num(feat["ball_v_1s"], nan=-1.0), -1, 40),
         "speed": feat["mean_speed"],
     }
+    if MOTION:
+        signals["motion"] = feat["motion_ml"]
     cols = []
     for x in signals.values():
         x = np.asarray(x, float)

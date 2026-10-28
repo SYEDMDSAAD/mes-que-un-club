@@ -443,11 +443,25 @@ def team_ml_log_odds(feat):
     return feat["team_ml"]
 
 
+def motion_ml_log_odds(feat):
+    """Ball-blind team log-odds H vs A per frame (motion_ml.py), cached in `feat` (benches fill
+    it leave-one-match-out)."""
+    if "motion_ml" not in feat:
+        import motion_ml
+        ball, players, team = load()
+        x = motion_ml.features(ball, players, team, blocks(), PITCH)
+        feat["motion_ml"] = motion_ml.log_odds(motion_ml.trained(), x)
+    return feat["motion_ml"]
+
+
 def touch_features(feat):
     """Ball-touch features (touchfeat.py) per frame, cached in `feat`."""
     if "touch" not in feat:
         import touchfeat
         ball, players, team = load()
+        if seq.TOUCH_BLUR > 0 and BLOCKS is not None:      # a training or bench match, not ours
+            import dfl_eval
+            ball = dfl_eval.blur_runs(ball, seq.TOUCH_BLUR)
         feat["touch"] = touchfeat.compute(ball, players, team)
     return feat["touch"]
 
@@ -461,6 +475,8 @@ def seq_log_odds(feat):
         ballfinder_log_odds(feat)
         if seq.TOUCH:
             touch_features(feat)
+        if seq.MOTION:
+            motion_ml_log_odds(feat)
         team, dead = seq.log_odds(seq.trained(dfl_eval_training_set), seq.features(feat))
         feat["seq_team"], feat["seq_dead"] = np.where(graded_mask(len(team)), team, 0.0), dead
     return feat["seq_team"], feat["seq_dead"]
@@ -486,6 +502,8 @@ def change_log_odds(feat):
         ballfinder_log_odds(feat)
         if seq.TOUCH:
             touch_features(feat)
+        if seq.MOTION:
+            motion_ml_log_odds(feat)
         z = change_ml.log_odds(change_ml.trained(dfl_eval_training_set), seq.features(feat))
         feat["change_logodds"] = np.where(graded_mask(len(z)), z, 0.0)
     return feat["change_logodds"]
