@@ -47,6 +47,17 @@ MAX_STEP = 1.0            # m per frame; faster is an identity jump
 CHUNK = 4000
 TRAIN_STEP = 5
 SEED = 0
+# Variant "motionline": + each team's back-line and front-line velocity towards the goal it
+# attacks (lines()). Replica (ATD-like Metrica, leave-one-match-out): right on 85.2 -> 85.6% of
+# in-play frames and 82.7 -> 83.1% of those whose nearest player is on the wrong team. A carrier
+# proxy (the most-pressed player's speed, distance to goal, support runs) and 4 / 8 s window means
+# or shifts added nothing beyond that there.
+LINES = variant.has("motionline")
+LINE_MAX_SPEED = 12.0     # m/s: faster is an identity jump
+# Variant "motioncopiesN": N randomly damaged training copies per DFL match (player noise and
+# dropout rate drawn per copy, dfl_eval.degrade(randomize=True)) for this model alone;
+# dfl_eval.TRAIN_COPIES stays as it is for the other models. 0: as dfl_eval.
+COPIES = int(variant.value("motioncopies", 0))
 MODEL_PATH = variant.cache_path(os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache", "motion_ml_model.pkl"))
 
@@ -103,6 +114,38 @@ def pressing(players, team):
     return out
 
 
+def lines(players, team, blocks):
+    """(N, 4): per team, the mean velocity towards the goal it attacks of its back line (its 4
+    deepest players after the deepest, the keeper) and of its front line (its 4 most advanced),
+    over half a second -- a line dropping after a loss, pushing up after a win."""
+    import warnings
+    from features import rolling_mean
+    px = players[..., 0].astype(float)
+    vx = np.full_like(px, np.nan)
+    vx[VEL_LAG:] = (px[VEL_LAG:] - px[:-VEL_LAG]) / VEL_LAG * FPS
+    vx[np.abs(vx) > LINE_MAX_SPEED] = np.nan
+    home = np.asarray(team) == 0
+    out = np.full((len(px), 4), np.nan)
+    for first, last in blocks:
+        sign = formation.attack_sign(players, team, first, last)    # +1: home attacks +x
+        seg = slice(first, last + 1)
+        cols = []
+        for members, s in ((home, sign), (~home, -sign)):
+            x = px[seg][:, members] * s               # larger: further up the pitch for this team
+            v = vx[seg][:, members] * s
+            fin = np.isfinite(x)
+            rows = np.arange(len(x))[:, None]
+            deep = v[rows, np.argsort(np.where(fin, x, np.inf), axis=1)[:, 1:5]]
+            front = v[rows, np.argsort(np.where(fin, -x, np.inf), axis=1)[:, :4]]
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                cols += [np.nanmean(deep, axis=1), np.nanmean(front, axis=1)]
+        out[seg] = np.column_stack(cols)
+    for k in range(4):
+        out[:, k] = rolling_mean(out[:, k], FPS // 2)
+    return out
+
+
 def features(ball, players, team, blocks, pitch=PITCH):
     """(N, F) player-only features; rows outside the blocks are NaN. `ball` is not read: it is
     there so the pipeline can call every first-stage model the same way."""
@@ -113,7 +156,8 @@ def features(ball, players, team, blocks, pitch=PITCH):
         shape = formation.features(blocks, pitch)
     finally:
         loader.OVERRIDE = saved
-    base = np.hstack([shape, pressing(players, team)])
+    base = np.hstack([shape, pressing(players, team)]
+                     + ([lines(players, team, blocks)] if LINES else []))
     cols = [base] + [shift(base, k) for k in LAGS] + [base - shift(base, -25), shift(base, 25) - base]
     x = np.hstack(cols).astype(np.float32)
     graded = np.zeros(len(x), bool)
@@ -145,8 +189,18 @@ def log_odds(model_prior, x):
     return out
 
 
-def dfl_training_set():
+def training_copies(ball, players, blocks, truth, team):
+    """The damaged (ball, players) copies of one DFL match this model trains on: dfl_eval's, with
+    its MOTION_DROP-frame player dropouts, or COPIES randomized ones (variant motioncopiesN)."""
     import dfl_eval
+    drop = dfl_eval.MOTION_DROP or None
+    if COPIES > 0:
+        return [dfl_eval.degrade(ball, players, blocks, seed=200 + k, randomize=True, truth=truth,
+                                 team=team, drop_len=drop) for k in range(COPIES)]
+    return dfl_eval.training_copies(ball, players, blocks, truth, team, drop_len=drop)
+
+
+def dfl_training_set():
     from external_dfl import convert, load_match, match_ids
     ids, files = match_ids()
     for m in ids:
@@ -154,8 +208,7 @@ def dfl_training_set():
     xs, labels = [], []
     for m in sorted(ids):
         ball, players, team, truth, blocks = load_match(m)
-        for d_ball, d_players in dfl_eval.training_copies(ball, players, blocks, truth, team,
-                                                          drop_len=dfl_eval.MOTION_DROP or None):
+        for d_ball, d_players in training_copies(ball, players, blocks, truth, team):
             xs.append(features(d_ball, d_players, team, blocks))
             labels.append(truth)
     return xs, labels

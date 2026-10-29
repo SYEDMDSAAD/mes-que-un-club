@@ -104,6 +104,23 @@ PARAMS = {
     "video_hold": 0,          # frames a video touch's team evidence is carried towards the next
     "k_change": 2.0,
     "change_min": 2.0,
+    # How team evidence meets the alive / dead decision (v16 options, off: "all" and 0 are v15.1).
+    # Viterbi keeps the better of H and A, which scores -log(1 + e^-|team|): -0.69 a frame with no
+    # team evidence, 0 with strong evidence. So the *strength* of the team evidence pulls a frame
+    # towards alive by up to 0.69 a frame, about what the dead evidence itself weighs (k_ml 0.2).
+    # Where the second stage is sure of the team inside a stoppage -- the players line up for the
+    # restart, which the motion model reads as possession -- the stoppage leaks into H / A.
+    #   "all"    the level from all the team evidence (v15.1)
+    #   "first"  the level from the evidence before the second stage (nearest player, ball-finder,
+    #            formation, team_ml, tags): the second stage, touch and video evidence then decide
+    #            only H against A, and can no longer move a frame between alive and dead
+    #   "flat"   one constant level, -alive_flat, on every frame: alive against dead from the
+    #            dead evidence alone
+    "alive_level": "all",
+    "alive_flat": 0.6931,
+    # > 0: the second stage's team log-odds times sigmoid(-seq_gate x its own dead log-odds), so
+    # they fade where the second stage itself calls the ball dead (0 = off, v15.1)
+    "seq_gate": 0.0,
 }
 STATES = np.array(["H", "A", "D"])
 # Set to [(first, last), ...] to run on a match other than BAR-ATH (see dfl_eval.py).
@@ -229,13 +246,17 @@ def emissions(feat, p, mask, events, form=None):
     dead *= p["k_rules"]
     if p["k_ml"]:
         dead += p["k_ml"] * dead_ml_log_lr(feat)
+    first_team = team.copy()                  # the evidence before the second stage
     if p["k_seq_team"] or p["k_seq_dead"]:
         seq_team, seq_dead = seq_log_odds(feat)
+        if p.get("seq_gate", 0.0) > 0:
+            seq_team = seq_team / (1.0 + np.exp(np.clip(p["seq_gate"] * seq_dead, -50.0, 50.0)))
         team = team + p["k_seq_team"] * seq_team
         dead += p["k_seq_dead"] * seq_dead
 
     tag_team, tag_dead = tag_evidence(len(team), events, p)
     team += tag_team
+    first_team = first_team + tag_team
     dead += tag_dead
     if p.get("k_video_team", 0.0) > 0:
         import video_events
@@ -243,10 +264,19 @@ def emissions(feat, p, mask, events, form=None):
                                                  p["k_video_team"], hold=int(p["video_hold"]))
 
     # log P(H|alive) and log P(A|alive): their difference is the team log-odds, and they sum to
-    # P(alive) = 1, so team evidence -- however strong -- never tips a frame between alive and dead.
+    # P(alive) = 1 -- but Viterbi takes the better of the two, not their sum, so strong team
+    # evidence does lift a frame towards alive (PARAMS alive_level).
     out = np.zeros((len(team), 3))
     out[:, H] = -np.logaddexp(0.0, -team)
     out[:, A] = -np.logaddexp(0.0, team)
+    level = p.get("alive_level", "all")
+    if level != "all":
+        # H - A stays the team log-odds; the better of the two is moved to the chosen level
+        target = (-np.logaddexp(0.0, -np.abs(first_team)) if level == "first"
+                  else np.full(len(team), -float(p["alive_flat"])))
+        lift = target + np.logaddexp(0.0, -np.abs(team))
+        out[:, H] += lift
+        out[:, A] += lift
     out[:, D] = dead
     pre = before_kickoff(len(out), p)
     out[pre, H] = out[pre, A] = -1e3

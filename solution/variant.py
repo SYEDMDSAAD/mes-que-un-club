@@ -23,6 +23,8 @@ its own models and the submission's stay untouched. Variants read TAG to switch 
     motiondropS  droplenS for the motion model's players only (train, and test on a bench); v15
             uses 250, motiondrop0 goes back to DROP_LEN
     nomotion  without the ball-blind, player-only possession model (motion_ml.py), on since v15
+    motionline  + back-line / front-line velocities in the motion model (motion_ml.lines)
+    motioncopiesN  N randomly damaged training copies per DFL match for the motion model alone
 
 Parts combine with "+": MQUC_VARIANT=motion+wrongball3+droplen250.
 """

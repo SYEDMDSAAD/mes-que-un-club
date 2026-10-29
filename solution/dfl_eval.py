@@ -360,11 +360,16 @@ def prepare(matches=None, dead_ml=False, team_ml=False, motion_ml=False):
                 ball, players, team, truth, blocks = load_match(m)
                 test_players = degrade(ball, players, blocks, truth=truth, team=team,
                                        drop_len=MOTION_DROP)[1]
-                own[m] = (test_players, [p for _, p in training_copies(
-                    ball, players, blocks, truth, team, drop_len=MOTION_DROP)]
-                    if TRAIN_COPIES > 1 else [test_players])
+                own[m] = (test_players, [p for _, p in mm.training_copies(
+                    ball, players, blocks, truth, team)]
+                    if TRAIN_COPIES > 1 or mm.COPIES > 0 else [test_players])
         else:
             own = {m: (data[m][1], [p for _, p in copies[m]]) for m in matches}
+            if mm.COPIES > 0:
+                for m in matches:
+                    ball, players, team, truth, blocks = load_match(m)
+                    own[m] = (own[m][0], [p for _, p in mm.training_copies(
+                        ball, players, blocks, truth, team)])
         x = {m: [mm.features(data[m][0], p, data[m][2], data[m][4]) for p in own[m][1]]
              for m in matches}
         test = {m: mm.features(data[m][0], own[m][0], data[m][2], data[m][4]) for m in matches}

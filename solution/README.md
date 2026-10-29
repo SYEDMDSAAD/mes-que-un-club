@@ -45,7 +45,7 @@ No video is decoded. Everything derived from the data goes to `cache/`, which is
 | `touchfeat.py` | ball-touch features for the second stage (multi-scale impulse, attribution to a team, touch events, control); variant `touch`, blanked on Metrica's rows |
 | `motion_ml.py` | possession from the players alone, blind to the ball, trained on DFL BallPossession: one more second-stage signal (v15; `MQUC_VARIANT=nomotion` = off) |
 | `change_ml.py` | "H <-> A change within +-3 frames" detector on the second stage's rows; its log-odds relieve the H <-> A cost (`PARAMS["k_change"]`, 0 = off) |
-| `video_events.py` | T-DEED ball actions from the broadcast video moved onto the tactical timeline, team-attributed, hashed; decoder relief of the H <-> A cost (`PARAMS["k_video"]`, 0 = off); `pseudo_events()` simulates them on labelled matches for tuning |
+| `video_events.py` | T-DEED ball actions from the broadcast video moved onto the tactical timeline, team-attributed, hashed; team evidence (`PARAMS["k_video_team"]`, `video_hold`) and relief of the H <-> A cost (`PARAMS["k_video"]`), 0 = off; `check` prints the figures `dfl_events.py sim-check` imitates |
 | `video/tdeed_infer.py` | runs T-DEED on the broadcast video reproducibly (decoded-frame check, no worker duplication, fp32, rounded scores); separate environment, `video/requirements-tdeed.txt` |
 
 ### Evaluation tools (not needed to reproduce)
@@ -65,7 +65,9 @@ No video is decoded. Everything derived from the data goes to `cache/`, which is
 | `video/ball_detector.py`, `video_value.py` | ball detector on the tactical video, GPU (tried, left out; see TECHNICAL.md) |
 | `mbr_bench.py [--bar-ath]` | expected-spellF1 decoding vs Viterbi on the 7 DFL + 3 Metrica matches (v11 second stage, leave-one-match-out), with calibration columns |
 | `domain_check.py [--labels file] [--more]` | ball-missing rates by state, gap lengths, ball speed / jerk, ball-to-player distance; with `--more` kink shape at 2 / 4 / 8 frames, interpolation, kick distance, out-of-bounds handling, players, and the labels' possession statistics: BAR-ATH vs clean and damaged DFL vs Metrica |
-| `ceiling_bench.py` | oracle ceilings on the cached bench emissions: perfect dead / team evidence, perfect change times, perfect boundaries, perfect short possessions -- where the remaining spellF1 is |
+| `ceiling_bench.py` | oracle ceilings on the submission decoder's final emissions and switch costs: perfect dead / team evidence (team rows "who" only since v16), perfect change times, perfect boundaries, perfect short possessions, team by frame type; then the pipeline's team accuracy by frame type -- where the remaining spellF1 is |
+| `dfl_events.py check / sim-check / bench` | DFL's event logs aligned to the clean tracking, turned into T-DEED-like events (recall, jitter, false events, footage gaps, team attributed on damaged tracking); `sim-check` prints `video_events.py check`'s figures for them; `bench` tunes `k_video_team` x `video_hold` on the 7 DFL matches |
+| `leak_bench.py [--bar-ath]` | the stoppage leak: second-stage weight against `alive_level` / `seq_gate` / `k_seq_dead` -- spellF1, macroF1, D-class F1 and frames moved between D and alive (BAR-ATH: over the full match) |
 | `touch_bench.py [--bar-ath]` | second stage and change detector leave-one-match-out on the 7 DFL + 3 Metrica matches, decoded at several `k_change`; run with and without `MQUC_VARIANT=touch...` |
 | `tags_check.py --labels <csv>` | Smart Tagging's team phases against the public ground truth: is it a source of *who*? (aggregates) |
 | `broadcast_check.py` | does the broadcast tracking get the nearest team right where the tactical one is wrong? (public window) |
