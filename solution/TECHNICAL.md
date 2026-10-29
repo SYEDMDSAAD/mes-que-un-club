@@ -9,7 +9,8 @@ is dead (D). A Viterbi decoder then finds the label sequence that best explains 
 paying a fixed price for every change of state. The decoder is what turns per-frame flicker into
 possessions with a beginning and an end, which is what spellF1 rewards. Most of the work went
 into the evidence, because the hard part of this match is not the frames where the ball is
-visible. It is the 41% of graded frames where it is not. We attack that from five directions:
+visible. It is the 41% of graded frames where it is not, and the frames where our tracking puts
+the ball next to the wrong team. We attack that from seven directions:
 
 1. borrow the ball from the broadcast tracking
 2. read possession from the shape of the two teams
@@ -20,6 +21,8 @@ visible. It is the 41% of graded frames where it is not. We attack that from fiv
    that a single frame cannot show
 6. a change detector, trained on the same rows, that tells the decoder *when* possession is
    likely to change hands, so a change costs less there
+7. a possession model that never looks at the ball: it reads only how the two teams move, which
+   still follows the real ball where the tracked one is wrong or missing
 
 | | public 5 min (17 possessions) | 7 DFL matches (≈3,000 possessions)¹ | 3 Metrica matches (≈1,100 possessions)³ |
 |---|---|---|---|
@@ -29,7 +32,8 @@ visible. It is the 41% of graded frames where it is not. We attack that from fiv
 | ours, second stage trained on DFL + Metrica (v11) | spellF1 0.613 · macroF1 0.899 | spellF1 0.530² · macroF1 0.874 | spellF1 0.633 |
 | ours, v11 + 7 s of dead-ball lean before a tagged set piece (v12) | spellF1 0.634 · macroF1 0.912 | spellF1 0.530²˒⁴ · macroF1 0.874 | spellF1 0.633⁴ |
 | ours, v12 with realistic ball damage in training (§3), dead before kickoff (v13) | spellF1 0.632 · macroF1 0.902 | spellF1 0.527²˒⁵ · macroF1 0.873 | spellF1 0.650 |
-| **ours (submitted, v14): v13 + a change detector (§1)** | **spellF1 0.625 · macroF1 0.905** | **spellF1 0.537²˒⁶** | **spellF1 0.661** |
+| ours, v13 + a change detector (v14) | spellF1 0.625 · macroF1 0.905 | spellF1 0.537²˒⁶ | spellF1 0.661 |
+| **ours (submitted, v15): v14 + the player-only model (§1)** | **spellF1 0.635 · macroF1 0.906** | **spellF1 0.557²˒⁷** | **spellF1 0.671** |
 
 ¹ Leave-one-match-out, on DFL tracking damaged to look like ours (§3). This bench, not the public
 window, is what every design decision was made on. The public window is 17 possessions of mostly
@@ -56,6 +60,15 @@ Metrica 0.650 → 0.661 (all 3 up: 0.690 / 0.642 / 0.649). On BAR-ATH the public
 (0.632 → 0.625, one boundary), macroF1 0.902 → 0.905, the restart check unchanged (0.847) and team
 agreement 0.843 → 0.837. It finds more possessions on the full match (307 → 338), closer to the
 4–6 per minute of play the labelled sources show.
+
+⁷ Same test matches as v14: DFL 0.537 → 0.557 (6 of 7 up: 0.478 / 0.486 / 0.616 / 0.574 / 0.566 /
+0.600 / 0.580), Metrica 0.661 → 0.671 (all 3 up). With Metrica's ball made to look like ours
+(`metatd`) 0.571 → 0.595 (all 3 up), and DFL in that run 0.519 → 0.545 (7 of 7). The second
+stage's team weight went from 0.5 to 0.4: at 0.5 the benches were higher still (DFL 0.567, Metrica
+0.676, `metatd` 0.606), but on BAR-ATH the stronger team evidence pulled stoppage frames into play
+(public dead-class F1 0.888 → 0.823, macroF1 0.878, past our alarm of −0.02); 0.4 is the strongest
+weight that does not (0.3: DFL 0.547; 0.2: 0.533). On BAR-ATH 326 possessions, restart check
+0.847, team agreement 0.845.
 
 ## 1. Approach
 
@@ -91,6 +104,7 @@ We chose an HMM and Viterbi over an end-to-end sequence model for three reasons:
 | **Learned team model** (`team_ml.py`) | everywhere | gradient-boosted classifier on DFL BallPossession: both teams' nearest and second-nearest distances and counts within 3/6 m, now, at the last-seen ball and at the next-seen ball, smoothed, plus the formation features. Output minus the training prior, weight 0.2 |
 | **Learned dead model** (`dead_ml.py`) | everywhere | gradient-boosted classifier on DFL BallStatus: player speed from 4 s before to 4 s after the frame (scaled by the match's own typical speed), ball seen, moving, out of bounds, distance to lines and corners, crowding. It replaced our hand-built stoppage rules, which called slow build-up dead |
 | **Second stage** (`seq.py`) | everywhere, mostly around changes | gradient-boosted H / A / D classifier on the DFL labels and on Metrica's three sample matches (labels rebuilt from their events, `external_metrica.py`) over a ±4 s window of the evidence above: the nearest-team distance gap, the learned team and dead outputs, the ball-finder, ball speed and player speed at offsets from −2 s to +2 s and as window means; frames since the last and until the next touch by each team; how often the nearest team flips within ±1 s and ±2 s (a scramble). Its inputs on the training matches are out of sample, as they are on BAR-ATH. Only its team log-odds are used, at weight 0.5. Per-frame team accuracy on DFL rises 2–4 points over the first-stage team model on every match |
+| **Player-only model** (`motion_ml.py`) | where the tracked ball is on the wrong team, or missing | gradient-boosted classifier on DFL BallPossession that never sees the ball: both teams' shape (centroids, depth, width, push, lines, from `formation.py`) and pressing (for each team its most-pressed player: opponents within 10 m running straight at him), now, ±1 and ±2 s, and their changes over the second before and after. The players react to the real ball, so it is right where ball-based models copy a tracking error. Trained on DFL damaged as for the others but with player dropouts 250 frames long (ours are few and long: 6–11 track births a minute, against 43–49 with the 50-frame dropouts). Its log-odds enter the second stage as one more signal; the second stage's team weight is 0.4 (was 0.5) |
 | **Change detector** (`change_ml.py`) | at changes of possession | gradient-boosted classifier on the second stage's input rows (DFL + Metrica, live frames): "is there an H↔A change within ±3 frames?". Its log-odds above the training prior, × 2, are taken off the H↔A cost on that frame, never below 2 (`k_change`, `change_min`). The second stage says *who*; this says *when*, which the per-frame team log-odds blur over the second either side of a change |
 | **Smart Tagging** (`tags.py`) | set pieces | a set-piece tag's restart sits about 88 frames (3.5 s) after the tag opens, the same as the kickoff tags. The 7 s before lean dead (in Metrica's matches the ball is dead for at least 7 s before 76% of set pieces: median 13 s, 9 s before a throw-in, 23 s before a free kick, 29 s before a corner), the seconds after lean live and towards the restarting team when the tag names one |
 
@@ -158,7 +172,7 @@ so the figures can be rebuilt.
 | Smart Tagging team phases as a per-frame prior (`tags_check.py`) | on the public window the tags cover 55% of in-play frames and are right on 0.774 of them (our labels 0.917); on the 729 frames where they disagree with ours they are right 0.162 of the time. Kept as an independent check only |
 | Training ball put on the wrong team for stretches (`MQUC_VARIANT=wrongballR`, R a minute) | not needed: damaged DFL already has the nearest player on the wrong team about as often as ours ("near right" 0.746 / 0.888 all / within 1.5 m, BAR-ATH public 0.781 / 0.889); every R from 1 to 6 moves it further away (R 1: 0.732 / 0.854, R 6: 0.675 / 0.727) |
 | Longer player dropouts in the DFL damage (`droplen250`) | track births 43–49 → 9–10 a minute, dropout length ~150 → 650–820 frames (ours 5.6–11 a minute, 1235 frames); on its own DFL 0.531 (−0.006), Metrica 0.665, BAR-ATH public 0.588 / 0.871 |
-| Player-only possession model in the second stage (`motion_ml.py`, `MQUC_VARIANT=motion`): formation and pressing features of both teams, blind to the ball, trained on DFL's true labels | the biggest lever found since v10: the ceiling bench puts perfect team evidence on frames whose nearest player is on the wrong team at +0.195 (DFL) / +0.181 (Metrica), and on frames without a ball at +0.168 / +0.011. motion: DFL 0.537 → 0.565 (7 of 7), Metrica 0.669; with `droplen250` 0.564 (7 of 7 against droplen250 alone), Metrica 0.669, Metrica with `metatd` 0.571 → 0.597 (3 of 3); with the longer dropouts in the motion model's players only (`motiondrop250`) DFL 0.567 (7 of 7), Metrica 0.676 (3 of 3), with `metatd` 0.606 (3 of 3). But BAR-ATH public macroF1 0.905 → 0.878–0.888 (spellF1 0.612–0.630), the loss all in the dead class (F1 0.888 → 0.823; team classes −0.01); 1.3% of the match's frames change. Not adopted yet |
+| Player-only possession model in the second stage at the v14 team weight 0.5, and with all models trained on the longer dropouts (`motion_ml.py`): formation and pressing features of both teams, blind to the ball, trained on DFL's true labels | the biggest lever found since v10: the ceiling bench puts perfect team evidence on frames whose nearest player is on the wrong team at +0.195 (DFL) / +0.181 (Metrica), and on frames without a ball at +0.168 / +0.011. motion: DFL 0.537 → 0.565 (7 of 7), Metrica 0.669; with `droplen250` 0.564 (7 of 7 against droplen250 alone), Metrica 0.669, Metrica with `metatd` 0.571 → 0.597 (3 of 3); with the longer dropouts in the motion model's players only (`motiondrop250`) DFL 0.567 (7 of 7), Metrica 0.676 (3 of 3), with `metatd` 0.606 (3 of 3). But BAR-ATH public macroF1 0.905 → 0.878–0.888 (spellF1 0.612–0.630), the loss all in the dead class (F1 0.888 → 0.823; team classes −0.01); 1.3% of the match's frames change. A second stage whose dead output comes from a model without the motion signal changed nothing: that output's weight is 0, the dead frames move with the team evidence. Adopted at team weight 0.4 instead (v15, footnote ⁷) |
 | The broadcast tracking's players as a second opinion where the tactical tracking puts the wrong team nearest the ball (`broadcast_check.py`) | where tactical is wrong, broadcast is right on only 35% of frames. Not used |
 
 ## 3. Possession rules we implemented
@@ -302,7 +316,7 @@ python evaluation/validate_submission.py "Mes Que Un Club.csv"
 - The first run downloads the DFL matches from figshare and Metrica's sample matches from GitHub,
   converts them, trains the learned models and caches everything in `cache/`.
 - All randomness is seeded, and the file is **byte-identical** across runs, including from an empty
-  cache. Submitted file md5: `7807d7b0e27752aa0c9c934432b590bc`.
+  cache. Submitted file md5: `0ab060ed4854124cbcf204f199413d41`.
 - Evaluation tools, none of them needed for reproduction:
   - `solution/dfl_eval.py --bench`: the DFL benchmark
   - `solution/metrica_eval.py`, `solution/metrica_bench.py`: the Metrica benchmark

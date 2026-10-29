@@ -47,9 +47,9 @@ TOUCH = variant.has("touch")
 # our ATD's (impulse p90 / p99, turn, kick distance in domain_check.py --more), while every other
 # model keeps the v13 training ball -- blurring that one cost BAR-ATH 0.03-0.04 macroF1.
 TOUCH_BLUR = variant.value("touchblur", 0.0)
-# Variant "motion": the ball-blind, player-only possession model (motion_ml.py) as one more signal,
-# with the same offsets and window means as the others.
-MOTION = variant.has("motion")
+# The ball-blind, player-only possession model (motion_ml.py) as one more signal, with the same
+# offsets and window means as the others (v15; variant "nomotion" switches it off).
+MOTION = not variant.has("nomotion")
 MODEL_PATH = variant.cache_path(os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache", "seq_model.pkl"))
 

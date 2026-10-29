@@ -49,7 +49,7 @@ DROP_LEN = int(variant.value("droplen", 50))   # frames
 # Variant "motiondropS": the same longer dropouts, but only in the players the motion model
 # (motion_ml.py) trains on and, on a bench, reads -- every other model keeps v13's 50-frame
 # dropouts. droplen250 for all models cost BAR-ATH macroF1 0.905 -> 0.871 on its own.
-MOTION_DROP = int(variant.value("motiondrop", 0))   # frames; 0: as DROP_LEN
+MOTION_DROP = int(variant.value("motiondrop", 250))   # frames (v15: 250); 0: as DROP_LEN
 SEED = 0
 # Training copies (see degrade(randomize=True)): how many per match, and the ranges drawn from.
 TRAIN_COPIES = 1

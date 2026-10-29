@@ -71,7 +71,7 @@ PARAMS = {
     "k_form_seen": 0.1,       # where it is: shapes lag a turnover, so the ball should lead
     "k_team_rules": 1.0,      # weight of the hand-built team evidence (nearest, formation, bf)
     "k_tml": 0.2,             # weight of the team classifier learned on DFL (team_ml.py)
-    "k_seq_team": 0.5,        # weights of the second-stage temporal model (seq.py)
+    "k_seq_team": 0.4,        # weights of the second-stage temporal model (seq.py); v14: 0.5
     "k_seq_dead": 0.0,
     "pseudo_dmin": 2.0,       # m: first-pass labels used for training only this close to the ball
     # ball-finder evidence: which team's player is nearest the unseen ball, per frame
