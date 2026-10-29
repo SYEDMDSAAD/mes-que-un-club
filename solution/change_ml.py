@@ -26,7 +26,7 @@ import variant
 
 # Params
 TOL = 3                   # frames either side of a true change that count as "change here"
-MIN_KEEP = 0              # frames the new possession must last to be a target (0 = every change)
+MIN_KEEP = 50             # frames the new possession must last to be a target (0 = every change; v15: 0)
 TRAIN_STEP = 5
 SEED = 0
 MODEL_PATH = variant.cache_path(os.path.join(
