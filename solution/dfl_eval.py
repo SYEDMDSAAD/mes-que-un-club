@@ -46,6 +46,10 @@ PLAYER_DROP = 0.07
 # track births a minute on a DFL match; ours has 6-11 (domain_check.py --more, "players"), in
 # fewer, longer gaps. droplen250 keeps the 7% and gives ~9 a minute.
 DROP_LEN = int(variant.value("droplen", 50))   # frames
+# Variant "motiondropS": the same longer dropouts, but only in the players the motion model
+# (motion_ml.py) trains on and, on a bench, reads -- every other model keeps v13's 50-frame
+# dropouts. droplen250 for all models cost BAR-ATH macroF1 0.905 -> 0.871 on its own.
+MOTION_DROP = int(variant.value("motiondrop", 0))   # frames; 0: as DROP_LEN
 SEED = 0
 # Training copies (see degrade(randomize=True)): how many per match, and the ranges drawn from.
 TRAIN_COPIES = 1
@@ -94,12 +98,12 @@ if variant.has("state40"):
 BALL_NOISE_SMOOTH = 12    # frames: Gaussian smoothing of the slow ball noise (state mode)
 
 
-def training_copies(ball, players, blocks, truth=None, team=None):
+def training_copies(ball, players, blocks, truth=None, team=None, drop_len=None):
     """The damaged versions of one match a learned model is trained on."""
     if TRAIN_COPIES <= 1:
-        return [degrade(ball, players, blocks, truth=truth, team=team)]
-    return [degrade(ball, players, blocks, seed=100 + k, randomize=True, truth=truth, team=team)
-            for k in range(TRAIN_COPIES)]
+        return [degrade(ball, players, blocks, truth=truth, team=team, drop_len=drop_len)]
+    return [degrade(ball, players, blocks, seed=100 + k, randomize=True, truth=truth, team=team,
+                    drop_len=drop_len) for k in range(TRAIN_COPIES)]
 
 
 def state_seen(labels, rng):
@@ -202,13 +206,15 @@ def wrong_ball(ball, players, team, truth, rate, rng):
     return out
 
 
-def degrade(ball, players, blocks, seed=SEED, randomize=False, truth=None, team=None):
+def degrade(ball, players, blocks, seed=SEED, randomize=False, truth=None, team=None,
+            drop_len=None):
     """Damage clean DFL tracking to look like ours.
 
     randomize=True draws the noise levels, the dropout rate and where in our match the ball-gap
     pattern is taken from, per call -- used for training copies, so a learned model sees many
     versions of the damage and cannot lean on any single one of them.
     truth (the match's labels) is needed by the "drift" and "state" modes; team by "wrongball".
+    drop_len overrides DROP_LEN (variant "motiondrop").
     """
     if DEGRADE_MODE == "state":
         return degrade_state(ball, players, blocks, seed, randomize, truth)
@@ -257,9 +263,10 @@ def degrade(ball, players, blocks, seed=SEED, randomize=False, truth=None, team=
     players = players.copy()
     players[..., :2] += rng.normal(0, player_noise, players[..., :2].shape)
     n, s = players.shape[:2]
-    starts = rng.random((n, s)) < player_drop / DROP_LEN
+    drop_len = drop_len or DROP_LEN
+    starts = rng.random((n, s)) < player_drop / drop_len
     for t, k in zip(*np.nonzero(starts)):
-        players[t:t + DROP_LEN, k] = np.nan
+        players[t:t + drop_len, k] = np.nan
     return ball, players
 
 
@@ -347,9 +354,20 @@ def prepare(matches=None, dead_ml=False, team_ml=False, motion_ml=False):
             data[m][5]["team_ml"] = tm_.log_odds(fitted, test[m])
     if motion_ml:
         import motion_ml as mm
-        x = {m: [mm.features(b, p, data[m][2], data[m][4]) for b, p in copies[m]]
+        if MOTION_DROP:                    # the motion model's own players, train and test alike
+            own = {}
+            for m in matches:
+                ball, players, team, truth, blocks = load_match(m)
+                test_players = degrade(ball, players, blocks, truth=truth, team=team,
+                                       drop_len=MOTION_DROP)[1]
+                own[m] = (test_players, [p for _, p in training_copies(
+                    ball, players, blocks, truth, team, drop_len=MOTION_DROP)]
+                    if TRAIN_COPIES > 1 else [test_players])
+        else:
+            own = {m: (data[m][1], [p for _, p in copies[m]]) for m in matches}
+        x = {m: [mm.features(data[m][0], p, data[m][2], data[m][4]) for p in own[m][1]]
              for m in matches}
-        test = {m: mm.features(data[m][0], data[m][1], data[m][2], data[m][4]) for m in matches}
+        test = {m: mm.features(data[m][0], own[m][0], data[m][2], data[m][4]) for m in matches}
         for m in matches:
             others = [k for k in matches if k != m]
             fitted = mm.fit([a for k in others for a in x[k]],

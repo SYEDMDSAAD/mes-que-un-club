@@ -20,6 +20,7 @@ its own models and the submission's stay untouched. Variants read TAG to switch 
     droplenS   player dropouts S frames long (v13: 50, ~46 track births a minute; ours 6-11)
     wrongballR R stretches a minute of play where the training ball sits on a player of the team
             without it, as our tracker does
+    motiondropS  droplenS for the motion model's players only (train, and test on a bench)
     motion  the ball-blind, player-only possession model (motion_ml.py) in the second stage
 
 Parts combine with "+": MQUC_VARIANT=motion+wrongball3+droplen250.
