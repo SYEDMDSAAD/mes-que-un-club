@@ -14,9 +14,11 @@ its own models and the submission's stay untouched. Variants read TAG to switch 
             kinks are as soft as our ATD's (smooth2, smooth3, ...)
     metatd  Metrica's sample ball (drawn from its events) blurred and offset to look like our
             ATD before anything reads it, for training and for the Metrica bench alike
-    touch   ball-touch features (touchfeat.py) in the second stage, blanked on Metrica's rows
+    notouch  without the ball-touch features (touchfeat.py) in the second stage, on since v16
+            (blanked on Metrica's rows)
     touchblurS  the touch features of training and bench matches computed from their ball
-            blurred by S frames; every other model keeps the v13 training ball
+            blurred by S frames (v16: 6; touchblur0 for none); every other model keeps the v13
+            training ball
     droplenS   player dropouts S frames long (v13: 50, ~46 track births a minute; ours 6-11)
     wrongballR R stretches a minute of play where the training ball sits on a player of the team
             without it, as our tracker does

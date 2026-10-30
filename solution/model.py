@@ -71,7 +71,7 @@ PARAMS = {
     "k_form_seen": 0.1,       # where it is: shapes lag a turnover, so the ball should lead
     "k_team_rules": 1.0,      # weight of the hand-built team evidence (nearest, formation, bf)
     "k_tml": 0.2,             # weight of the team classifier learned on DFL (team_ml.py)
-    "k_seq_team": 0.4,        # weights of the second-stage temporal model (seq.py); v14: 0.5
+    "k_seq_team": 0.7,        # weights of the second-stage temporal model (seq.py); v15.1: 0.4
     "k_seq_dead": 0.0,
     "pseudo_dmin": 2.0,       # m: first-pass labels used for training only this close to the ball
     # ball-finder evidence: which team's player is nearest the unseen ball, per frame
@@ -119,8 +119,8 @@ PARAMS = {
     "alive_level": "all",
     "alive_flat": 0.6931,
     # > 0: the second stage's team log-odds times sigmoid(-seq_gate x its own dead log-odds), so
-    # they fade where the second stage itself calls the ball dead (0 = off, v15.1)
-    "seq_gate": 0.0,
+    # they fade where the second stage itself calls the ball dead (0 = off, v15.1; v16: 1)
+    "seq_gate": 1.0,
 }
 STATES = np.array(["H", "A", "D"])
 # Set to [(first, last), ...] to run on a match other than BAR-ATH (see dfl_eval.py).

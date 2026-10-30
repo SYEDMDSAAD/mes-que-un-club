@@ -38,15 +38,16 @@ WINDOWS = (12, 25, 50, 100)
 CAP = 250                 # frames: "no touch for 10 s" is as far as the touch clock counts
 TRAIN_STEP = 5
 SEED = 0
-# Ball-touch features (touchfeat.py) appended to the window features: variant "touch". They are
-# blanked (NaN) on any match whose feat dict carries event_ball -- Metrica's sample matches, whose
-# ball is drawn from the same events their labels are rebuilt from.
-TOUCH = variant.has("touch")
-# Variant "touchblurS": on the training and bench matches (not BAR-ATH) the touch features are
-# computed from a copy of their ball blurred by a Gaussian of S frames, so their kinks look like
-# our ATD's (impulse p90 / p99, turn, kick distance in domain_check.py --more), while every other
-# model keeps the v13 training ball -- blurring that one cost BAR-ATH 0.03-0.04 macroF1.
-TOUCH_BLUR = variant.value("touchblur", 0.0)
+# Ball-touch features (touchfeat.py) appended to the window features (v16; variant "notouch"
+# switches them off). They are blanked (NaN) on any match whose feat dict carries event_ball --
+# Metrica's sample matches, whose ball is drawn from the same events their labels are rebuilt from.
+TOUCH = not variant.has("notouch")
+# Variant "touchblurS" (v16: 6, touchblur0 for none): on the training and bench matches (not
+# BAR-ATH) the touch features are computed from a copy of their ball blurred by a Gaussian of S
+# frames, so their kinks look like our ATD's (impulse p90 / p99, turn, kick distance in
+# domain_check.py --more), while every other model keeps the v13 training ball -- blurring that one
+# cost BAR-ATH 0.03-0.04 macroF1.
+TOUCH_BLUR = variant.value("touchblur", 6.0)
 # The ball-blind, player-only possession model (motion_ml.py) as one more signal, with the same
 # offsets and window means as the others (v15; variant "nomotion" switches it off).
 MOTION = not variant.has("nomotion")
