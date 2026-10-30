@@ -16,7 +16,11 @@ build
      the wrong second), and not within CUT_GUARD frames of footage that is not live (T-DEED's 8-s
      context straddles the cut there). Graded frames only.
   2. the acting team: the team of the player nearest the ball (fused ball) at the mapped frame,
-     the closest over +-ATTR_WINDOW frames; -1 if no ball or nobody within ATTR_REACH.
+     the closest over +-ATTR_WINDOW frames; -1 if no ball or nobody within ATTR_REACH. A
+     prediction that carries a "team" of its own ("H" / "A", e.g. from the shirt colour of the
+     player at the ball in that broadcast frame) keeps it instead: on the DFL bench the team from
+     our kind of ball turned the video's gain negative (dfl_events.py bench --team-source prices
+     an independent source).
   3. quantised and sorted (frame, label, confidence to 2 decimals, team, distance to 0.1 m), so a
      rerun on other hardware writes the same bytes. Its SHA-256 is printed: put it in
      EXPECTED_SHA256 and load() refuses any other file.
@@ -85,12 +89,21 @@ FPS = 25
 
 # -- build ------------------------------------------------------------------------------------------
 
+def team_code(value):
+    """0 (home) / 1 (away) / -1 (none) from a prediction's optional "team" field."""
+    v = "" if value is None else str(value).strip().lower()
+    return 0 if v in ("0", "h", "home") else 1 if v in ("1", "a", "away") else -1
+
+
 def read_predictions(path):
-    """[(broadcast frame, label, confidence)] from T-DEED's inference JSON."""
+    """[(broadcast frame, label, confidence, team)] from T-DEED's inference JSON. team is 0 / 1
+    when a prediction carries a "team" field of its own (a source that is not our ball, e.g. the
+    shirt colour of the player at the ball in that broadcast frame), else -1."""
     with open(path) as handle:
         data = json.load(handle)
     preds = data["predictions"] if isinstance(data, dict) else data
-    return [(int(p["frame"]), str(p["label"]), float(p["confidence"])) for p in preds]
+    return [(int(p["frame"]), str(p["label"]), float(p["confidence"]), team_code(p.get("team")))
+            for p in preds]
 
 
 def live_mask(cost, b_index, live_cost, relax_share, rolling_mean, window):
@@ -110,16 +123,16 @@ def guard(live, n_guard):
 
 
 def to_tactical(preds, offsets, blocks, live, n_tactical):
-    """Each prediction on the tactical timeline: (tactical frame, label, conf), live graded only.
-
-    A broadcast frame b maps to b + offset of the half whose graded frames contain it.
+    """Each prediction on the tactical timeline: (tactical frame, label, conf[, team]), live graded
+    only. A broadcast frame b maps to b + offset of the half whose graded frames contain it.
     """
     out = []
-    for b, label, conf in preds:
+    for pred in preds:
+        b = pred[0]
         for (first, last), offset in zip(blocks, offsets):
             t = b + offset + EVENT_SHIFT
             if first <= t <= last and 0 <= t < n_tactical and live[t]:
-                out.append((t, label, conf))
+                out.append((t,) + tuple(pred[1:]))
                 break
     return out
 
@@ -169,8 +182,18 @@ def build(json_path):
     coverage(live, blocks, ball)
     live = guard(live, CUT_GUARD)
     events = to_tactical(read_predictions(json_path), broadcast.OFFSETS, blocks, live, len(ball))
-    sha = write_csv(attribute(events, ball, players, team))
+    attributed = attribute([e[:3] for e in events], ball, players, team)
+    own = [e[3] for e in events]
+    rows = [(t, lab, c, tm_own if tm_own >= 0 else tm, d)
+            for (t, lab, c, tm, d), tm_own in zip(attributed, own)]
+    sha = write_csv(rows)
     print("{} events on live, graded footage -> {}\nsha256 {}".format(len(events), CSV, sha))
+    with_own = [(tm_own, row[3]) for tm_own, row in zip(own, attributed) if tm_own >= 0]
+    if with_own:
+        both = [(a, b) for a, b in with_own if b >= 0]
+        print("{} events carry a team of their own (used instead of our ball's); where our ball "
+              "names one too, they agree on {:.0%} of {}".format(
+                  len(with_own), np.mean([a == b for a, b in both]) if both else np.nan, len(both)))
     return sha
 
 

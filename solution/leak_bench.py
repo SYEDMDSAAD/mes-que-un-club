@@ -30,10 +30,12 @@ bench_data.labelled(); variant "testbar" scores DFL on a BAR-like ball), against
                                                 # BAR-ATH only, against a labels file -- e.g.
                                                 # rows of a touch variant against the v15.1 file
 
-The full-match columns read all 158,857 graded frames without labels. "moved" turned out a weak
-alarm (v15's leak at 0.5 moved 0.23% of the match yet cost the public window 0.07 of D-F1: few
-stoppages, each lost whole); "lost" counts exactly those. A row should lose no more of v15.1's
-stoppages than ordinary decoding changes do -- compare it with "seq 0.5", the known leak.
+The full-match columns read all 158,857 graded frames without labels. "moved" is a weak alarm and
+so is a bare count: v15's leak at 0.5 was ONE lost stoppage, which happens to sit in the public
+window. So every lost and new stoppage is checked against the match's own Smart Tagging: a
+stoppage with a tagged set piece restarting in it or just after it (tagged()) is almost certainly
+real. Losing tagged stoppages is the leak; losing untagged ones is removing false stoppages.
+"restart" is tags.proxy_scores' set-piece check (experiment.py's column).
 """
 
 import os
@@ -68,6 +70,7 @@ SETTINGS = {
 }
 REFS = ("v15.1 (seq 0.4)", "first, seq 0.4")   # rows "moved" is measured against
 STOP_MIN = 25             # frames: a stoppage is a D run at least this long
+TAG_AFTER = 75            # frames after a stoppage a tagged set-piece restart may come (tagged())
 
 
 def scores(truth, labels):
@@ -129,6 +132,25 @@ def main(settings=SETTINGS, refs=REFS):
                                                       "; ".join(mv)), flush=True)
 
 
+def tagged(runs, restarts):
+    """How many of runs a Smart Tagging set piece restarts in or within TAG_AFTER frames after --
+    a stoppage the match's own tagging confirms. Nearly every real stoppage ends in a set piece
+    (throw-in, goal kick, corner, free kick, kick-off), so a lost stoppage without one was most
+    likely a false one, and a new one with one most likely real."""
+    r = np.sort(np.asarray(restarts))
+    if not len(r):
+        return 0
+    lo = np.searchsorted(r, [a for a, _ in runs])
+    hi = np.searchsorted(r, [b + TAG_AFTER for _, b in runs], side="right")
+    return int(np.sum(hi > lo))
+
+
+def changed(ref_runs, mine, ref, lab):
+    """(lost, new): ref's stoppages lab keeps less than half D, and lab's that ref does."""
+    return ([(a, b) for a, b in ref_runs if (lab[a:b] == "D").mean() < 0.5],
+            [(a, b) for a, b in mine if (ref[a:b] == "D").mean() < 0.5])
+
+
 def bar_ath(settings=SETTINGS, refs=REFS, ref_csv=None):
     """ref_csv: a labels file (e.g. the v15.1 submission) to count lost / new stoppages and moved
     frames against instead of the first REFS row -- to compare across variants (touch...)."""
@@ -152,20 +174,24 @@ def bar_ath(settings=SETTINGS, refs=REFS, ref_csv=None):
         compare = {r: labels[r] for r in refs}
     reference = compare.get(ref_name)
     ref_stops = stoppages(reference, graded) if reference is not None else []
-    print("{:<32} public: spellF1  macroF1  D-F1   | full match: D share  stops  lost  new  "
-          "(vs {})  moved vs {}".format("BAR-ATH", ref_name or "-", " / ".join(compare)))
+    restarts = [e["start"] + tags.RESTART_OFFSET for e in events if e["code"] == tags.SET_PIECE]
+    print("{:<32} public: spellF1  macroF1  D-F1   | full match: D share  stops (tagged)  lost "
+          "(tagged)  new (tagged)  restart  (vs {})  moved vs {}".format(
+              "BAR-ATH", ref_name or "-", " / ".join(compare)))
     if reference is not None:
-        print("{:<32} {:>58} {:.3f}   {:4d}".format(ref_name, "|", (reference[graded] == "D").mean(),
-                                                    len(ref_stops)))
+        print("{:<32} {:>58} {:.3f}   {:4d} ({:4d})                            {:.3f}".format(
+            ref_name, "|", (reference[graded] == "D").mean(), len(ref_stops),
+            tagged(ref_stops, restarts), tags.proxy_scores(reference, events)["restart_ok"]))
     for name, lab in labels.items():
         r = pm.evaluate(gt, pm.label_codes(lab), bootstrap_n=0)
         mine = stoppages(lab, graded)
-        print("{:<32}         {:.4f}   {:.4f}   {:.4f} |             {:.3f}   {:4d}  {:4d} {:4d}"
-              "            {}".format(
+        gone, fresh = changed(ref_stops, mine, reference, lab) if reference is not None else ([], [])
+        print("{:<32}         {:.4f}   {:.4f}   {:.4f} |             {:.3f}   {:4d} ({:4d})  {:4d} "
+              "({:4d})  {:4d} ({:4d})   {:.3f}            {}".format(
                   name, r["spell_f1_mean"], r["macro_f1"], r["per_class"]["D"]["f1"],
-                  (lab[graded] == "D").mean(), len(mine),
-                  lost(ref_stops, lab) if reference is not None else 0,
-                  lost(mine, reference) if reference is not None else 0,
+                  (lab[graded] == "D").mean(), len(mine), tagged(mine, restarts), len(gone),
+                  tagged(gone, restarts), len(fresh), tagged(fresh, restarts),
+                  tags.proxy_scores(lab, events)["restart_ok"],
                   " / ".join("{:.2%}".format(moved(lab, ref, graded)) for ref in compare.values())),
               flush=True)
 

@@ -26,7 +26,8 @@ its own models and the submission's stay untouched. Variants read TAG to switch 
     motionline  + back-line / front-line velocities in the motion model (motion_ml.lines)
     motioncopiesN  N randomly damaged training copies per DFL match for the motion model alone
     testbar  benches only: the DFL matches are scored on a BAR-like ball (dfl_eval.degrade_test)
-            while every model is still trained on the usual damage (bench_data.py)
+            while every model is still trained on the usual damage (bench_data.py);
+            testblurS / testslowS set that ball's blur (frames) and slow offset (m)
 
 Parts combine with "+": MQUC_VARIANT=motion+wrongball3+droplen250.
 """

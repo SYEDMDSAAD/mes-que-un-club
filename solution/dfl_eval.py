@@ -105,8 +105,14 @@ BALL_NOISE_SMOOTH = 12    # frames: Gaussian smoothing of the slow ball noise (s
 # on the drift damage, run on a ball missing by state -- so decisions that hinge on how often and
 # how well the ball is seen (alive_level, seq_gate, motion, touch, video) can be checked on it.
 TEST_BAR = variant.has("testbar")
-TEST_BLUR = 3.0           # frames (external_metrica.ATD_BLUR)
-TEST_SLOW = 1.15          # m, smoothed over TEST_SLOW_SMOOTH frames (ATD_SLOW)
+# The defaults are the metatd transform, made for Metrica's event-drawn ball. On TRACAB they leave
+# the ball rougher than ours and farther from the players (domain_check: impulse4 p90 4.4 against
+# 2.8, turn8 p90 0.30 against 0.12, near live p50 2.2 against 1.7 m, near right 0.72 against 0.78)
+# -- harsh on exactly what the touch features read. Parts "testblurS" / "testslowS" set them (the
+# touch blur's calibration, blur 6 with the usual 0.3 m noise, matched BAR-ATH's kinks); the parts
+# join the cache tag, so a new setting never reads an old cache.
+TEST_BLUR = variant.value("testblur", 3.0)    # frames (external_metrica.ATD_BLUR)
+TEST_SLOW = variant.value("testslow", 1.15)   # m, smoothed over TEST_SLOW_SMOOTH frames (ATD_SLOW)
 TEST_SLOW_SMOOTH = 12
 TEST_JITTER = 0.01        # m, smoothed over 1.5 frames
 

@@ -10,9 +10,10 @@ detector, all leave-one-match-out. Aggregates only, no output of its own.
 Variant "testbar" (dfl_eval.TEST_BAR): the DFL matches are scored on a BAR-like ball while every
 model keeps learning from the usual damage -- the first-stage classifiers inside dfl_eval.prepare,
 and here the second stage and the change detector, which are fitted on the rows of the usual
-first stage (the cache of the same variant without "testbar", so "touch+touchblur6+testbar" reads
-"touch+touchblur6"'s; keep the parts in the same order) and applied to the BAR-like rows. That is
-the submission's own situation: trained on the drift damage, run on our ball.
+first stage (the cache of the same variant without the test parts -- "testbar", "testblurS",
+"testslowS" -- so "touch+touchblur6+testbar+testblur6" reads "touch+touchblur6"'s; keep the other
+parts in the same order) and applied to the BAR-like rows. That is the submission's own
+situation: trained on the drift damage, run on our ball.
 """
 
 import os
@@ -28,6 +29,9 @@ import seq  # noqa: E402
 import variant  # noqa: E402
 
 KEYS = ("seq_team", "seq_dead", "change_logodds")
+# the variant parts that only shape the test damage: left out of the tag of the training caches
+TEST_PARTS = tuple(p for p in variant.PARTS
+                   if p == "testbar" or p.startswith("testblur") or p.startswith("testslow"))
 
 
 def first_stages(test_bar=None):
@@ -37,9 +41,9 @@ def first_stages(test_bar=None):
     test_bar = dfl_eval.TEST_BAR if test_bar is None else test_bar
     dfl_path = (convention_bench.CACHE if test_bar == dfl_eval.TEST_BAR else
                 variant.cache_path(os.path.join(ROOT, "cache", "bench_dfl_prepared.pkl"),
-                                   without=("testbar",)))
+                                   without=TEST_PARTS))
     met_path = variant.cache_path(os.path.join(ROOT, "cache", "bench_metrica_prepared.pkl"),
-                                  without=("testbar",))     # Metrica is never test-damaged
+                                  without=TEST_PARTS)       # Metrica is never test-damaged
     data = {("dfl", m): v for m, v in convention_bench.dfl_first_stage(
         dfl_path, test_bar=test_bar).items()}
     data.update({("metrica", m): v for m, v in metrica_bench.metrica_first_stage(met_path).items()})

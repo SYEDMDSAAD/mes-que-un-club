@@ -46,6 +46,7 @@ T-DEED marks on the broadcast video. They are
                                                # BAR-ATH, for the simulated DFL events
     python solution/dfl_events.py bench        # the decomposition: oracle and noisy profiles
     python solution/dfl_events.py bench --grid # the tuning grid on the T-DEED-like profiles
+    python solution/dfl_events.py bench --team-source   # the accuracy a team source would need
 
 Calibrate SIM until sim-check prints what `video_events.py check` prints on BAR-ATH's real
 T-DEED events -- events a minute per kind, the kick offset spread, the share of changes with an
@@ -110,6 +111,8 @@ SIM = {
     "cut_guard": video_events.CUT_GUARD,
     "attr_ball": "bar",       # "bar" or "bench", see the docstring
     "team_from": "attributed",   # "attributed" (as on BAR-ATH) or "log": the logged team
+    "team_error": 0.0,        # with "log": share of events whose logged team is flipped -- an
+                              # imperfect team source of its own (shirt colour, say)
 }
 # The oracle profiles take the bench apart: "exact, logged team" is every aligned action and carry,
 # on its frame, sure, with the team from the log -- the most DFL's actions can tell the decoder;
@@ -125,6 +128,9 @@ PROFILES = {
     "exact, logged team": dict(EXACT, team_from="log"),
     "exact, attributed": dict(EXACT),
     "measured, logged team": {"team_from": "log"},
+    "measured, logged team, 5% wrong": {"team_from": "log", "team_error": 0.05},
+    "measured, logged team, 10% wrong": {"team_from": "log", "team_error": 0.10},
+    "measured, logged team, 20% wrong": {"team_from": "log", "team_error": 0.20},
 }
 SETTINGS = {"no video": {}}
 for _k in (1.0, 2.0, 3.0):
@@ -138,11 +144,14 @@ SETTINGS["who 2, hold 50, alive first"] = {"k_video_team": 2.0, "video_hold": 50
 SEEDS = (0, 1)
 # `bench` alone: the decomposition -- which part of the chain caps the gain -- on a few settings,
 # one seed (the exact profiles draw nothing). `bench --grid`: every setting on the T-DEED-like
-# profiles, two seeds, once SIM is calibrated.
+# profiles, two seeds, once SIM is calibrated. `bench --team-source`: how accurate a team source of
+# its own (shirt colour at the event, say) would have to be: the logged team flipped 5 / 10 / 20%.
 SPLIT_PROFILES = ("exact, logged team", "exact, attributed", "measured, logged team",
                   "measured (SIM)")
 SPLIT_SETTINGS = ("no video", "who 2, hold 50", "who 4, hold 100", "who 2, hold 50, when 1")
 GRID_PROFILES = ("measured (SIM)", "good", "fair")
+TEAM_PROFILES = ("measured, logged team", "measured, logged team, 5% wrong",
+                 "measured, logged team, 10% wrong", "measured, logged team, 20% wrong")
 
 
 # -- 1. parse ---------------------------------------------------------------------------------------
@@ -563,8 +572,11 @@ def simulate(true_events, truth, blocks, ball, players, team, rng, sim=None):
             if 0 <= f < n and shown[f]]
     rows = video_events.attribute([(t, k, c) for t, k, c, _ in keep], ball, players, team)
     log = sim["team_from"] == "log"
-    return sorted((t, lab, round(c, 2), int(tm_log) if log and tm_log is not None else tm)
-                  for (t, lab, c, tm, _), (_, _, _, tm_log) in zip(rows, keep))
+    flips = rng.random(len(keep)) < sim["team_error"] if log and sim["team_error"] > 0 else \
+        np.zeros(len(keep), bool)
+    return sorted((t, lab, round(c, 2),
+                   (1 - int(tm_log) if flip else int(tm_log)) if log and tm_log is not None else tm)
+                  for (t, lab, c, tm, _), (_, _, _, tm_log), flip in zip(rows, keep, flips))
 
 
 def sim_check(matches=None, sim=None, seed=0):
@@ -675,6 +687,9 @@ if __name__ == "__main__":
         sim_check(sys.argv[2:] or None)
     elif command == "bench" and "--grid" in sys.argv[2:]:
         bench({k: PROFILES[k] for k in GRID_PROFILES})
+    elif command == "bench" and "--team-source" in sys.argv[2:]:
+        bench({k: PROFILES[k] for k in TEAM_PROFILES}, {k: SETTINGS[k] for k in SPLIT_SETTINGS},
+              seeds=(0, 1))
     elif command == "bench":
         bench({k: PROFILES[k] for k in SPLIT_PROFILES}, {k: SETTINGS[k] for k in SPLIT_SETTINGS},
               seeds=(0,))
