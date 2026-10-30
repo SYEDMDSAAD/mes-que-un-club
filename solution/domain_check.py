@@ -52,6 +52,13 @@ different in training and in the submission.
 
 With MQUC_VARIANT=testbar each DFL match gets a third line, its BAR-like test copy
 (dfl_eval.degrade_test): "seen" by state, v live, near live and dv live should sit near BAR-ATH's.
+
+    python solution/domain_check.py --calibrate
+
+calibrates that copy (variant parts testblurS / testslowS, also the training ball of "seqbar"):
+for each (blur, slow) in CALIBRATE, the rows the second stage and the touch features read, as the
+median over the DFL matches' test copies, against BAR-ATH's public window, and "off": the mean
+|log(DFL / BAR-ATH)| over those rows (0 = identical). No variant needed; nothing is cached.
 """
 
 import os
@@ -255,6 +262,48 @@ def show_more(name, s):
               f(s["drop len"], "{:.0f}"), f(s["v1s dead"], "{:.2f}")), flush=True)
 
 
+# (blur frames, slow offset m) tried by --calibrate; (3, 1.15) is the testbar default (metatd)
+CALIBRATE = ((3.0, 1.15), (6.0, 0.3), (6.0, 0.6), (4.0, 0.3), (8.0, 0.3), (6.0, 0.15))
+# (row, index, label): what --calibrate compares and scores
+CAL_ROWS = (("v live", 1, "v live p50"), ("dv live", 0, "dv p50"), ("near live", 0, "near p10"),
+            ("near live", 1, "near p50"), ("near live", 2, "near p90"), ("turn 4", 1, "turn4 p90"),
+            ("turn 8", 1, "turn8 p90"), ("impulse4", 0, "imp4 p50"), ("impulse4", 1, "imp4 p90"),
+            ("impulse4", 2, "imp4 p99"), ("kick near", 0, "kick near"),
+            ("near right", 0, "right"), ("near right", 1, "right<1.5m"))
+
+
+def calibration_row(s, m):
+    return [(m if row in m else s)[row][i] for row, i, _ in CAL_ROWS]
+
+
+def calibrate():
+    """--calibrate: see the module docstring."""
+    ball, players, our_team = load()
+    public = pd.read_csv(GT)["label"].values
+    idx = np.flatnonzero(public != "X")
+    bl = [(idx[0], idx[-1])]
+    bar = calibration_row(stats(ball, players, public, bl),
+                          more_stats(ball, players, public, bl, our_team))
+    rows = {c: [] for c in CALIBRATE}
+    for m in dfl_eval.cached_matches():
+        b, p, tm, truth, blocks = load_dfl(m)
+        for blur, slow in CALIBRATE:
+            dfl_eval.TEST_BLUR, dfl_eval.TEST_SLOW = blur, slow
+            t_b, t_p = dfl_eval.degrade_test(b, p, blocks, truth, tm)
+            rows[(blur, slow)].append(calibration_row(stats(t_b, t_p, truth, blocks),
+                                                      more_stats(t_b, t_p, truth, blocks, tm)))
+        print("  {} done".format(m), flush=True)
+    print("{:<22}".format("") + "".join("{:>11}".format(label) for _, _, label in CAL_ROWS)
+          + "{:>8}".format("off"))
+    print("{:<22}".format("BAR-ATH public") + "".join("{:>11.2f}".format(v) for v in bar))
+    bar = np.array(bar, float)
+    for (blur, slow), values in sorted(rows.items()):
+        med = np.nanmedian(np.array(values, float), axis=0)
+        off = np.nanmean(np.abs(np.log(np.clip(med, 1e-6, None) / np.clip(bar, 1e-6, None))))
+        print("{:<22}".format("testblur{:g}+testslow{:g}".format(blur, slow))
+              + "".join("{:>11.2f}".format(v) for v in med) + "{:>8.3f}".format(off), flush=True)
+
+
 def main(labels_path=None, more=False):
     ball, players, our_team = load()
     blocks = [(first, last) for _, first, last in half_video_blocks(GAME)]
@@ -285,4 +334,7 @@ def main(labels_path=None, more=False):
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    main(args[args.index("--labels") + 1] if "--labels" in args else None, "--more" in args)
+    if "--calibrate" in args:
+        calibrate()
+    else:
+        main(args[args.index("--labels") + 1] if "--labels" in args else None, "--more" in args)

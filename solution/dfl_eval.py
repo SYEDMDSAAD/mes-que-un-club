@@ -115,6 +115,17 @@ TEST_BLUR = variant.value("testblur", 3.0)    # frames (external_metrica.ATD_BLU
 TEST_SLOW = variant.value("testslow", 1.15)   # m, smoothed over TEST_SLOW_SMOOTH frames (ATD_SLOW)
 TEST_SLOW_SMOOTH = 12
 TEST_JITTER = 0.01        # m, smoothed over 1.5 frames
+# Variant "seqbar": the second stage (seq.py) and the change detector (change_ml.py) LEARN from the
+# DFL matches on that BAR-like ball (degrade_test, with the testblurS / testslowS parts) instead of
+# the usual damage, for the submission and the benches alike. testbar measured the gap: trained on
+# the clock-time damage, scored on a BAR-like ball, DFL falls 0.558 -> 0.536, and most of a new
+# signal's gain goes with it. The first-stage models (dead, team, motion) keep learning from the
+# usual damage, so "no ball means dead" -- which a ball missing by state teaches, and which cost
+# BAR-ATH public macroF1 0.90 -> 0.72 in "state" -- never reaches the dead evidence; in the second
+# stage it can only fade that stage's own team evidence (seq_gate). "seqmix": both copies of every
+# DFL match. Metrica's rows are the same either way.
+SEQ_BAR = variant.has("seqbar")
+SEQ_MIX = variant.has("seqmix")
 
 
 def training_copies(ball, players, blocks, truth=None, team=None, drop_len=None):
@@ -431,23 +442,28 @@ def seq_training_set():
     Its inputs on each match are the first-stage outputs that match would get as a test match:
     the learned models leave-one-match-out, the ball-finder cross-fitted within the match --
     exactly the situation of BAR-ATH, where every first-stage model is out of sample.
+
+    Their ball: the usual damage, or with "seqbar" the BAR-like test ball (both with "seqmix").
     """
     import seq
-    data = prepare(dead_ml=True, team_ml=True, motion_ml=seq.MOTION, test_bar=False)
     xs, labels = [], []
-    for ball, players, team, truth, blocks, feat in data.values():
-        loader.OVERRIDE = (ball, players, team)
-        model.BLOCKS = blocks
-        try:
-            feat.update(model.compute())
-            model.ballfinder_log_odds(feat)
-            if seq.TOUCH:
-                model.touch_features(feat)
-        finally:
-            loader.OVERRIDE = None
-            model.BLOCKS = None
-        xs.append(seq.features(feat))
-        labels.append(truth)
+    for bar_like in ((False, True) if SEQ_MIX else (SEQ_BAR,)):
+        data = prepare(dead_ml=True, team_ml=True, motion_ml=seq.MOTION, test_bar=bar_like)
+        for ball, players, team, truth, blocks, feat in data.values():
+            loader.OVERRIDE = (ball, players, team)
+            model.BLOCKS = blocks
+            try:
+                feat.update(model.compute())
+                if bar_like:
+                    feat["bar_like"] = True    # its ball already looks like ours: no touch blur
+                model.ballfinder_log_odds(feat)
+                if seq.TOUCH:
+                    model.touch_features(feat)
+            finally:
+                loader.OVERRIDE = None
+                model.BLOCKS = None
+            xs.append(seq.features(feat))
+            labels.append(truth)
     return xs, labels
 
 

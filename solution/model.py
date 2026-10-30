@@ -121,6 +121,12 @@ PARAMS = {
     # > 0: the second stage's team log-odds times sigmoid(-seq_gate x its own dead log-odds), so
     # they fade where the second stage itself calls the ball dead (0 = off, v15.1; v16: 1)
     "seq_gate": 1.0,
+    # > 0: after decoding, a possession shorter than this many frames between two possessions of
+    # the other team is given back to that team (convention.rewrite on our own labels; 0 = off).
+    # On DFL our team is right on only ~55% of the frames of true possessions under 2 s, and the
+    # public window has few of them (12% under 2 s, DFL 30%): a hedge on the private labels'
+    # convention, scored against both by tune_bench.py
+    "min_spell": 0,
 }
 STATES = np.array(["H", "A", "D"])
 # Set to [(first, last), ...] to run on a match other than BAR-ATH (see dfl_eval.py).
@@ -580,4 +586,8 @@ def predict(params=None, feat=None, events=None):
         return labels
     form = formation_log_odds(feat, labels, p)
     labels = decode(emissions(feat, p, mask, events, form), p, feat, final=True)
-    return snap(labels, feat, p) if p["snap_window"] else labels
+    labels = snap(labels, feat, p) if p["snap_window"] else labels
+    if p.get("min_spell", 0) > 0:
+        import convention
+        labels = convention.rewrite(labels, int(p["min_spell"]))
+    return labels

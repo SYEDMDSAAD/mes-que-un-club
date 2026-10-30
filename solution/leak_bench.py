@@ -53,6 +53,8 @@ import dfl_eval  # noqa: E402
 import model  # noqa: E402
 
 # Params
+# Each row is overrides of model.PARAMS. Since v16 those are seq_gate 1, k_seq_team 0.7, so the
+# first row (named for the v16.x runs) is now v16 itself; tune_bench.py names its rows by value.
 SETTINGS = {
     "v15.1 (seq 0.4)": {},
     "seq 0.5": {"k_seq_team": 0.5},
@@ -145,6 +147,13 @@ def tagged(runs, restarts):
     return int(np.sum(hi > lo))
 
 
+def possessions(labels, graded):
+    """How many possessions (maximal H or A runs) on graded frames."""
+    lab = np.where(graded, np.asarray(labels), "X")
+    starts = np.flatnonzero(np.r_[True, lab[1:] != lab[:-1]])
+    return int(np.isin(lab[starts], ["H", "A"]).sum())
+
+
 def changed(ref_runs, mine, ref, lab):
     """(lost, new): ref's stoppages lab keeps less than half D, and lab's that ref does."""
     return ([(a, b) for a, b in ref_runs if (lab[a:b] == "D").mean() < 0.5],
@@ -176,23 +185,28 @@ def bar_ath(settings=SETTINGS, refs=REFS, ref_csv=None):
     ref_stops = stoppages(reference, graded) if reference is not None else []
     restarts = [e["start"] + tags.RESTART_OFFSET for e in events if e["code"] == tags.SET_PIECE]
     print("{:<32} public: spellF1  macroF1  D-F1   | full match: D share  stops (tagged)  lost "
-          "(tagged)  new (tagged)  restart  (vs {})  moved vs {}".format(
+          "(tagged)  new (tagged)  restart  (vs {})  moved vs {}  | poss  tag team".format(
               "BAR-ATH", ref_name or "-", " / ".join(compare)))
     if reference is not None:
-        print("{:<32} {:>58} {:.3f}   {:4d} ({:4d})                            {:.3f}".format(
-            ref_name, "|", (reference[graded] == "D").mean(), len(ref_stops),
-            tagged(ref_stops, restarts), tags.proxy_scores(reference, events)["restart_ok"]))
+        proxy = tags.proxy_scores(reference, events)
+        print("{:<32} {:>58} {:.3f}   {:4d} ({:4d})                            {:.3f}"
+              "{:>21}  {:4d}  {:.3f}".format(
+                  ref_name, "|", (reference[graded] == "D").mean(), len(ref_stops),
+                  tagged(ref_stops, restarts), proxy["restart_ok"], "|",
+                  possessions(reference, graded), proxy["team_agree"]))
     for name, lab in labels.items():
         r = pm.evaluate(gt, pm.label_codes(lab), bootstrap_n=0)
         mine = stoppages(lab, graded)
         gone, fresh = changed(ref_stops, mine, reference, lab) if reference is not None else ([], [])
+        proxy = tags.proxy_scores(lab, events)
         print("{:<32}         {:.4f}   {:.4f}   {:.4f} |             {:.3f}   {:4d} ({:4d})  {:4d} "
-              "({:4d})  {:4d} ({:4d})   {:.3f}            {}".format(
+              "({:4d})  {:4d} ({:4d})   {:.3f}            {}  | {:4d}  {:.3f}".format(
                   name, r["spell_f1_mean"], r["macro_f1"], r["per_class"]["D"]["f1"],
                   (lab[graded] == "D").mean(), len(mine), tagged(mine, restarts), len(gone),
                   tagged(gone, restarts), len(fresh), tagged(fresh, restarts),
-                  tags.proxy_scores(lab, events)["restart_ok"],
-                  " / ".join("{:.2%}".format(moved(lab, ref, graded)) for ref in compare.values())),
+                  proxy["restart_ok"],
+                  " / ".join("{:.2%}".format(moved(lab, ref, graded)) for ref in compare.values()),
+                  possessions(lab, graded), proxy["team_agree"]),
               flush=True)
 
 

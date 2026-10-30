@@ -30,6 +30,11 @@ its own models and the submission's stay untouched. Variants read TAG to switch 
     testbar  benches only: the DFL matches are scored on a BAR-like ball (dfl_eval.degrade_test)
             while every model is still trained on the usual damage (bench_data.py);
             testblurS / testslowS set that ball's blur (frames) and slow offset (m)
+            (domain_check.py --calibrate)
+    seqbar  the second stage and the change detector learn from the DFL matches on that BAR-like
+            ball (with its testblurS / testslowS) instead of the usual damage -- the submission's
+            models and the benches' alike; the first-stage models keep the usual damage
+    seqmix  the same from both copies of every DFL match
 
 Parts combine with "+": MQUC_VARIANT=motion+wrongball3+droplen250.
 """
