@@ -53,10 +53,12 @@ RUN = ("DFL + Metrica (v11)", "DFL + Metrica refined", "DFL + Metrica x2",
 RUN_WEIGHTS = (0.5,)
 
 
-def metrica_first_stage():
-    """{match: (ball, players, team, truth, blocks, feat)} with the DFL-trained first stage."""
-    if os.path.isfile(CACHE):
-        with open(CACHE, "rb") as handle:
+def metrica_first_stage(path=None):
+    """{match: (ball, players, team, truth, blocks, feat)} with the DFL-trained first stage,
+    cached in path (default CACHE)."""
+    path = path or CACHE
+    if os.path.isfile(path):
+        with open(path, "rb") as handle:
             return pickle.load(handle)
     data = {}
     for m in MATCHES:
@@ -76,7 +78,7 @@ def metrica_first_stage():
         finally:
             loader.OVERRIDE, model.BLOCKS = None, None
         data[m] = (ball, players, team, truth, blocks, feat)
-    with open(CACHE, "wb") as handle:
+    with open(path, "wb") as handle:
         pickle.dump(data, handle)
     return data
 

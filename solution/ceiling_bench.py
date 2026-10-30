@@ -2,8 +2,8 @@
 
 Each row hands the decoder one part of the truth and decodes again, on the final emissions and
 per-frame switch costs of the submission's decoder (DFL + Metrica; second stage AND change
-detector fitted leave-one-match-out, as touch_bench.py and dfl_events.py fit them, shared cache;
-final pass exactly as model.predict builds it, k_change relief included):
+detector fitted leave-one-match-out, bench_data.labelled(); final pass exactly as model.predict
+builds it, k_change relief included; variant "testbar": DFL scored on a BAR-like ball):
 
     pipeline             Viterbi on the emissions as they are
     perfect dead         the D evidence replaced by the truth (+-M per frame); team evidence as is
@@ -264,12 +264,10 @@ def prepared(params=None):
     if params is None and os.path.isfile(path):
         with open(path, "rb") as handle:
             return pickle.load(handle)
-    import dfl_events
+    import bench_data
     import load as loader
     import mbr_bench
-    import touch_bench
-    data = touch_bench.first_stages()
-    dfl_events.fills(data)
+    data = bench_data.labelled()
     p = dict(model.PARAMS, **(params or {}))
     out = {}
     for key, (ball, players, team, truth, blocks, feat) in data.items():

@@ -39,22 +39,27 @@ PARAMS = {"k_seq_team": 0.5}
 SWITCHES = (9, 7)
 
 
-def dfl_first_stage():
-    """{match: (ball, players, team, truth, blocks, feat)} with the first stage filled, cached."""
-    if os.path.isfile(CACHE):
-        with open(CACHE, "rb") as handle:
+def dfl_first_stage(path=None, test_bar=None):
+    """{match: (ball, players, team, truth, blocks, feat)} with the first stage filled, cached in
+    path (default CACHE). test_bar: as dfl_eval.prepare (default: variant "testbar")."""
+    path = path or CACHE
+    if os.path.isfile(path):
+        with open(path, "rb") as handle:
             return pickle.load(handle)
-    data = dfl_eval.prepare(dead_ml=True, team_ml=True, motion_ml=seq.MOTION)
+    bar_like = dfl_eval.TEST_BAR if test_bar is None else test_bar
+    data = dfl_eval.prepare(dead_ml=True, team_ml=True, motion_ml=seq.MOTION, test_bar=bar_like)
     for ball, players, team, _, blocks, feat in data.values():
         loader.OVERRIDE, model.BLOCKS = (ball, players, team), blocks
         try:
             feat.update(compute())
+            if bar_like:
+                feat["bar_like"] = True        # its ball already looks like ours: no touch blur
             model.ballfinder_log_odds(feat)
             if seq.TOUCH:
                 model.touch_features(feat)
         finally:
             loader.OVERRIDE, model.BLOCKS = None, None
-    with open(CACHE, "wb") as handle:
+    with open(path, "wb") as handle:
         pickle.dump(data, handle)
     return data
 

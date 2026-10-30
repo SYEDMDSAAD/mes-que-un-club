@@ -49,6 +49,9 @@ different in training and in the submission.
                 the second stage read it)
 
     python solution/domain_check.py [--labels "Mes Que Un Club.csv"] [--more]
+
+With MQUC_VARIANT=testbar each DFL match gets a third line, its BAR-like test copy
+(dfl_eval.degrade_test): "seen" by state, v live, near live and dv live should sit near BAR-ATH's.
 """
 
 import os
@@ -272,6 +275,9 @@ def main(labels_path=None, more=False):
         both("DFL {} clean".format(m), b, p, truth, bl, tm)
         d_b, d_p = dfl_eval.degrade(b, p, bl, truth=truth, team=tm)
         both("DFL {} damaged".format(m), d_b, d_p, truth, bl, tm)
+        if dfl_eval.TEST_BAR:                   # the bench's BAR-like test copy (testbar)
+            t_b, t_p = dfl_eval.degrade_test(b, p, bl, truth, tm)
+            both("DFL {} testbar".format(m), t_b, t_p, truth, bl, tm)
     for m in external_metrica.MATCHES:
         b, p, tm, truth, bl = external_metrica.load_match(m)
         both("Metrica {}".format(m), b, p, truth, bl, tm)

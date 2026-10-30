@@ -10,24 +10,30 @@ sure of the team (the players line up for the restart), so the stoppage turns in
 Lowering k_seq_team hides it and gives up the team evidence everywhere else.
 
 Every SETTINGS row on every labelled match (second stage and change detector leave-one-match-out,
-the cache dfl_events.py and ceiling_bench.py share), against the first row (v15.1):
+bench_data.labelled(); variant "testbar" scores DFL on a BAR-like ball), against the first row
+(v15.1):
 
     spellF1   DFL and Metrica, paired difference, matches up
-    D-F1      the D class's F1, the leak's own figure, and macroF1
-    moved     share of graded frames that changed between D and alive against each REFS row:
-              v15.1, and "first, seq 0.4" -- with alive_level "first" the stoppages should stay
-              put (moved ~0) however high the second-stage weight goes
+    D-F1      the D class's F1 and macroF1
+    stops     true stoppages (D runs of STOP_MIN frames or more) missed -- less than half of them
+              called D -- out of all of them, and stoppages called where the truth has less than
+              half D: the leak's own signature is a stoppage lost whole, which D-F1 and the frame
+              counts dilute
+    moved     share of graded frames that changed between D and alive against each REFS row
 
     python solution/leak_bench.py               # the labelled matches
     python solution/leak_bench.py --bar-ath     # + BAR-ATH: public window spellF1 / macroF1 /
-                                                # D-F1, and over the FULL match the D share and
-                                                # the frames moved between D and alive
+                                                # D-F1, and over the FULL match the D share, the
+                                                # stoppages, how many of v15.1's are lost and how
+                                                # many are new, and the frames moved
+    python solution/leak_bench.py --bar-only --ref "Mes Que Un Club.csv"
+                                                # BAR-ATH only, against a labels file -- e.g.
+                                                # rows of a touch variant against the v15.1 file
 
-The full-match columns are the gate the public window cannot be (it holds a few stoppages). They
-need no labels, so they read all 158,857 graded frames: once the fix is in, raising the team
-weight (or adding touch or video evidence) must leave BAR-ATH's stoppages where they are --
-moved against "first, seq 0.4" well under 0.5% of the match -- while the one-off move from v15.1
-to "first" is judged on the public window's D-F1 and on the labelled matches' D-F1.
+The full-match columns read all 158,857 graded frames without labels. "moved" turned out a weak
+alarm (v15's leak at 0.5 moved 0.23% of the match yet cost the public window 0.07 of D-F1: few
+stoppages, each lost whole); "lost" counts exactly those. A row should lose no more of v15.1's
+stoppages than ordinary decoding changes do -- compare it with "seq 0.5", the known leak.
 """
 
 import os
@@ -55,11 +61,13 @@ SETTINGS = {
     "first, seq 1.0": {"alive_level": "first", "k_seq_team": 1.0},
     "seq_gate 1, seq 0.5": {"seq_gate": 1.0, "k_seq_team": 0.5},
     "seq_gate 1, seq 0.7": {"seq_gate": 1.0, "k_seq_team": 0.7},
+    "seq_gate 2, seq 0.7": {"seq_gate": 2.0, "k_seq_team": 0.7},
     "k_seq_dead 0.3, seq 0.5": {"k_seq_dead": 0.3, "k_seq_team": 0.5},
     "first + k_seq_dead 0.3, seq 0.7": {"alive_level": "first", "k_seq_dead": 0.3,
                                         "k_seq_team": 0.7},
 }
 REFS = ("v15.1 (seq 0.4)", "first, seq 0.4")   # rows "moved" is measured against
+STOP_MIN = 25             # frames: a stoppage is a D run at least this long
 
 
 def scores(truth, labels):
@@ -72,21 +80,33 @@ def moved(labels, ref, graded):
     return ((labels == "D") != (ref == "D"))[graded].mean()
 
 
+def stoppages(labels, graded):
+    """[(start, stop)] of the D runs of STOP_MIN frames or more on graded frames."""
+    d = (np.asarray(labels) == "D") & graded
+    edges = np.flatnonzero(np.diff(np.r_[0, d.astype(np.int8), 0]))
+    return [(a, b) for a, b in zip(edges[::2], edges[1::2]) if b - a >= STOP_MIN]
+
+
+def lost(runs, labels):
+    """How many of runs keep less than half their frames D in labels."""
+    labels = np.asarray(labels)
+    return sum(int((labels[a:b] == "D").mean() < 0.5) for a, b in runs)
+
+
 def main(settings=SETTINGS, refs=REFS):
-    import dfl_events
-    import touch_bench
-    data = touch_bench.first_stages()
-    dfl_events.fills(data)
+    import bench_data
+    data = bench_data.labelled()
     labels = {name: {key: dfl_eval.run_pipeline(b, p, tm, bl, params, feat)
                      for key, (b, p, tm, truth, bl, feat) in data.items()}
               for name, params in settings.items()}
     refs = [r for r in refs if r in labels]
     first = next(iter(settings))
-    print("{:<32} {:<44} {:<44} {}".format(
+    true_stops = {k: stoppages(v[3], v[3] != "X") for k, v in data.items()}
+    print("{:<32} {:<44} {:<44} {:<30} {}".format(
         "", "DFL spellF1 (diff, up)  macro   D-F1", "Metrica spellF1 (diff, up)  macro   D-F1",
-        "moved D<->alive vs " + " / ".join(refs) + " (DFL, Metrica)"))
+        "stops missed / false (DFL; Metrica)", "moved vs " + " / ".join(refs) + " (DFL; Metrica)"))
     for name in settings:
-        cells, mv = [], []
+        cells, mv, st = [], [], []
         for source in ("dfl", "metrica"):
             keys = [k for k in data if k[0] == source]
             if not keys:
@@ -98,14 +118,24 @@ def main(settings=SETTINGS, refs=REFS):
             cells.append("{:.4f} ({:+.4f}, {} of {})  {:.4f}  {:.4f}".format(
                 rows[:, 0].mean(), d.mean(), int((d > 0).sum()), len(d), rows[:, 1].mean(),
                 rows[:, 2].mean()))
+            missed = sum(lost(true_stops[k], labels[name][k]) for k in keys)
+            false = sum(lost(stoppages(labels[name][k], data[k][3] != "X"), data[k][3])
+                        for k in keys)
+            st.append("{}/{} {}".format(missed, sum(len(true_stops[k]) for k in keys), false))
             mv.append("/".join("{:.2%}".format(np.mean([moved(labels[name][k], labels[r][k],
                                                               data[k][3] != "X") for k in keys]))
                                for r in refs))
-        print("{:<32} {:<44} {:<44} {}".format(name, cells[0], cells[1], "  ".join(mv)),
-              flush=True)
+        print("{:<32} {:<44} {:<44} {:<30} {}".format(name, cells[0], cells[1], "; ".join(st),
+                                                      "; ".join(mv)), flush=True)
 
 
-def bar_ath(settings=SETTINGS, refs=REFS):
+def bar_ath(settings=SETTINGS, refs=REFS, ref_csv=None):
+    """ref_csv: a labels file (e.g. the v15.1 submission) to count lost / new stoppages and moved
+    frames against instead of the first REFS row -- to compare across variants (touch...)."""
+    if dfl_eval.TEST_BAR:
+        print("(--bar-ath skipped: testbar changes only how the DFL matches are scored)")
+        return
+    import pandas as pd
     import experiment
     import tags
     from features import compute
@@ -114,18 +144,35 @@ def bar_ath(settings=SETTINGS, refs=REFS):
     graded = model.graded_mask(len(feat["ball_x"]))
     labels = {name: model.predict(params, feat, events) for name, params in settings.items()}
     refs = [r for r in refs if r in labels]
-    print("{:<32} public: spellF1  macroF1  D-F1   | full match: D share  moved vs {}".format(
-        "BAR-ATH", " / ".join(refs)))
+    if ref_csv:
+        labels_ref = pd.read_csv(ref_csv)["label"].astype(str).values
+        ref_name, compare = os.path.basename(ref_csv), {os.path.basename(ref_csv): labels_ref}
+    else:
+        ref_name = refs[0] if refs else None
+        compare = {r: labels[r] for r in refs}
+    reference = compare.get(ref_name)
+    ref_stops = stoppages(reference, graded) if reference is not None else []
+    print("{:<32} public: spellF1  macroF1  D-F1   | full match: D share  stops  lost  new  "
+          "(vs {})  moved vs {}".format("BAR-ATH", ref_name or "-", " / ".join(compare)))
+    if reference is not None:
+        print("{:<32} {:>58} {:.3f}   {:4d}".format(ref_name, "|", (reference[graded] == "D").mean(),
+                                                    len(ref_stops)))
     for name, lab in labels.items():
         r = pm.evaluate(gt, pm.label_codes(lab), bootstrap_n=0)
-        print("{:<32}         {:.4f}   {:.4f}   {:.4f} |             {:.3f}    {}".format(
-            name, r["spell_f1_mean"], r["macro_f1"], r["per_class"]["D"]["f1"],
-            (lab[graded] == "D").mean(),
-            " / ".join("{:.2%}".format(moved(lab, labels[ref], graded)) for ref in refs)),
-            flush=True)
+        mine = stoppages(lab, graded)
+        print("{:<32}         {:.4f}   {:.4f}   {:.4f} |             {:.3f}   {:4d}  {:4d} {:4d}"
+              "            {}".format(
+                  name, r["spell_f1_mean"], r["macro_f1"], r["per_class"]["D"]["f1"],
+                  (lab[graded] == "D").mean(), len(mine),
+                  lost(ref_stops, lab) if reference is not None else 0,
+                  lost(mine, reference) if reference is not None else 0,
+                  " / ".join("{:.2%}".format(moved(lab, ref, graded)) for ref in compare.values())),
+              flush=True)
 
 
 if __name__ == "__main__":
-    main()
-    if "--bar-ath" in sys.argv[1:]:
-        bar_ath()
+    args = sys.argv[1:]
+    if "--bar-only" not in args:
+        main()
+    if "--bar-ath" in args or "--bar-only" in args:
+        bar_ath(ref_csv=args[args.index("--ref") + 1] if "--ref" in args else None)

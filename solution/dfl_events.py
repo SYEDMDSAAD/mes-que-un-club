@@ -11,13 +11,15 @@ T-DEED marks on the broadcast video. They are
                   The logged times are a person's: in DFL's own sample they trail the tracking by
                   2.0-3.4 s, and the lag wanders. Each half gets one clock offset -- the one that
                   puts the most kicks on kick onsets of the clean ball by the kicker's team -- and
-                  then every event is snapped to the nearest frame where its team touches the
-                  ball (a kick onset for a kick, the first frame at the ball otherwise): first
-                  within SNAP_WIDE of the half's offset, then within SNAP of that offset corrected
-                  by the median shift of its LOCAL neighbours. An event that finds no touch is
-                  dropped. `check` reports the offsets, how many snapped, how far, how often the
-                  logged team holds the ball at the snapped frame, and the agreement with DFL's
-                  own CalculatedFrame where an event carries one (shots).
+                  then every event is snapped to a frame where its team touches the ball (a kick
+                  onset for a kick, the first frame at the ball otherwise): first the nearest
+                  within SNAP_WIDE of the half's offset, then, around that offset corrected by
+                  the median shift of its LOCAL neighbours, the candidate that best fits both the
+                  time and the logged location (TIME_SCALE / SPACE_SCALE; within SNAP_WIDE where
+                  the location is usable, SNAP where not). An event that finds no touch is
+                  dropped. `check` reports the offsets, how many snapped, how far, the location
+                  fit, how often the logged team holds the ball at the snapped frame, and the
+                  agreement with DFL's own CalculatedFrame where an event carries one (shots).
   3. as T-DEED would see them (SIM)
                   kept with probability recall per kind; timing jitter and delay; confidences;
                   false events; stretches of play without live footage (replays, close-ups)
@@ -31,13 +33,19 @@ T-DEED marks on the broadcast video. They are
                   the events without a team.
   4. tuned        (bench) the pipeline on the DFL matches with feat["video_events"] filled, the
                   second stage and change detector fitted leave-one-match-out over DFL + Metrica
-                  (as touch_bench.py), every SETTINGS row for every PROFILES row, paired against
-                  "no video", averaged over SEEDS.
+                  (bench_data.labelled), every SETTINGS row for every PROFILES row, paired against
+                  "no video", averaged over SEEDS. The oracle profiles take the gain apart:
+                  "exact, logged team" (every action, on its frame, the team from the log) is the
+                  most these events can give; "exact, attributed" what is left with the team from
+                  our kind of tracking; the noisy profiles what is left after T-DEED. With
+                  MQUC_VARIANT=...+testbar the matches are scored on a BAR-like ball and the
+                  events attributed on it -- where the tracking sees a touch as badly as ours.
 
     python solution/dfl_events.py check        # alignment, per match
     python solution/dfl_events.py sim-check    # the figures video_events.py check prints on
                                                # BAR-ATH, for the simulated DFL events
-    python solution/dfl_events.py bench        # the tuning grid (first run fits ~30 min)
+    python solution/dfl_events.py bench        # the decomposition: oracle and noisy profiles
+    python solution/dfl_events.py bench --grid # the tuning grid on the T-DEED-like profiles
 
 Calibrate SIM until sim-check prints what `video_events.py check` prints on BAR-ATH's real
 T-DEED events -- events a minute per kind, the kick offset spread, the share of changes with an
@@ -47,7 +55,6 @@ it for how much the answer depends on the calibration.
 """
 
 import os
-import pickle
 import sys
 import warnings
 import xml.etree.ElementTree as ET
@@ -71,6 +78,17 @@ SMOOTH = 4.0              # frames: Gaussian smoothing of the offset histogram
 SNAP_WIDE = 50            # frames: first snap, around the half's offset
 SNAP = 25                 # frames: second snap, around the neighbour-corrected offset
 LOCAL = 15                # snapped events each side whose median shift corrects an event
+# Where the log says the action happened (X/Y-Source-Position, else X/Y-Position, in metres of the
+# match's pitch): between candidate touches in the window, the one whose clean ball is nearest that
+# spot wins, at SPACE_SCALE m worth TIME_SCALE frames. Shots on DFL's own CalculatedFrame were 57%
+# within +-3 frames by time alone: a quick pass of the same team a few frames away beats the shot.
+# Orientation per half (the log's axes may be mirrored against the tracking's): the mirror whose
+# median distance at the time-snapped kicks is smallest, if under LOC_MAX m on LOC_MIN_EVENTS.
+TIME_SCALE = 12.0         # frames
+SPACE_SCALE = 4.0         # m
+LOC_MAX = 8.0             # m
+LOC_MIN_EVENTS = 20
+LOC_FAR = 15.0            # m: the distance charged where the clean ball is not tracked
 KICK_REACH = 2.0          # m: the kicker's distance to the clean ball around a kick onset
 CONTACT = 1.5             # m: nearest player this close to the clean ball = a touch
 CARRY_REACH = 1.0         # m
@@ -91,22 +109,40 @@ SIM = {
     "gap_len": 125,           # frames, mean length of a stretch without it
     "cut_guard": video_events.CUT_GUARD,
     "attr_ball": "bar",       # "bar" or "bench", see the docstring
+    "team_from": "attributed",   # "attributed" (as on BAR-ATH) or "log": the logged team
 }
+# The oracle profiles take the bench apart: "exact, logged team" is every aligned action and carry,
+# on its frame, sure, with the team from the log -- the most DFL's actions can tell the decoder;
+# "exact, attributed" the same with the team from our kind of tracking; the rest add T-DEED's noise.
+EXACT = {"recall": {k: 1.0 for k in SIM["recall"]}, "jitter": 0.0, "delay": 0,
+         "conf_true": (1.0, 1.0), "false_per_min": 0.0, "play_coverage": 1.0}
 PROFILES = {
     "measured (SIM)": {},
     "good": {"recall": {k: min(1.0, v + 0.1) for k, v in SIM["recall"].items()},
              "jitter": 1.5, "false_per_min": 0.5},
     "fair": {"recall": {k: v * 0.75 for k, v in SIM["recall"].items()},
              "jitter": 4.0, "false_per_min": 2.0, "play_coverage": 0.85},
+    "exact, logged team": dict(EXACT, team_from="log"),
+    "exact, attributed": dict(EXACT),
+    "measured, logged team": {"team_from": "log"},
 }
 SETTINGS = {"no video": {}}
 for _k in (1.0, 2.0, 3.0):
     for _hold in (0, 25, 50):
         SETTINGS["who {:.0f}, hold {}".format(_k, _hold)] = {"k_video_team": _k, "video_hold": _hold}
+for _k, _hold in ((4.0, 50), (4.0, 100), (6.0, 100)):
+    SETTINGS["who {:.0f}, hold {}".format(_k, _hold)] = {"k_video_team": _k, "video_hold": _hold}
 SETTINGS["who 2, hold 50, when 1"] = {"k_video_team": 2.0, "video_hold": 50, "k_video": 1.0}
 SETTINGS["who 2, hold 50, alive first"] = {"k_video_team": 2.0, "video_hold": 50,
                                            "alive_level": "first"}
 SEEDS = (0, 1)
+# `bench` alone: the decomposition -- which part of the chain caps the gain -- on a few settings,
+# one seed (the exact profiles draw nothing). `bench --grid`: every setting on the T-DEED-like
+# profiles, two seeds, once SIM is calibrated.
+SPLIT_PROFILES = ("exact, logged team", "exact, attributed", "measured, logged team",
+                  "measured (SIM)")
+SPLIT_SETTINGS = ("no video", "who 2, hold 50", "who 4, hold 100", "who 2, hold 50, when 1")
+GRID_PROFILES = ("measured (SIM)", "good", "fair")
 
 
 # -- 1. parse ---------------------------------------------------------------------------------------
@@ -168,10 +204,34 @@ def kind_of(tags, attrs):
     return None, None
 
 
+def pitch_size(info_path):
+    """(length, width) of the match's pitch from the match information, else external_dfl.PITCH."""
+    for env in ET.parse(info_path).getroot().iter("Environment"):
+        try:
+            return float(env.get("PitchX")), float(env.get("PitchY"))
+        except (TypeError, ValueError):
+            break
+    return external_dfl.PITCH
+
+
+def location(event, pitch):
+    """Where the log puts the action, in our arrays' metres (corner origin, the tracking's
+    105 x 68 frame, centres matched), or None."""
+    x = event.get("X-Source-Position") or event.get("X-Position")
+    y = event.get("Y-Source-Position") or event.get("Y-Position")
+    try:
+        return (float(x) - pitch[0] / 2 + external_dfl.PITCH[0] / 2,
+                float(y) - pitch[1] / 2 + external_dfl.PITCH[1] / 2)
+    except (TypeError, ValueError):
+        return None
+
+
 def parse(events_path, info_path):
     """(rows, starts, ends): rows [(time, half, kind, team 0 home / 1 away, CalculatedFrame or
-    -1)] in time order; starts / ends {half: time} from the kick-off and final-whistle entries."""
+    -1, location or None)] in time order; starts / ends {half: time} from the kick-off and
+    final-whistle entries."""
     home = external_dfl.home_team_id(info_path)
+    pitch = pitch_size(info_path)
     starts, ends, raw = {}, {}, []
     for event in ET.parse(events_path).getroot().iter("Event"):
         if not event.get("EventTime"):
@@ -192,17 +252,18 @@ def parse(events_path, info_path):
         if kind is None or key not in attrs:
             continue
         calc = event.get("CalculatedFrame")
-        raw.append((time, kind, 0 if attrs[key] == home else 1, int(calc) if calc else -1))
+        raw.append((time, kind, 0 if attrs[key] == home else 1, int(calc) if calc else -1,
+                    location(event, pitch)))
     rows = []
     order = sorted(starts, key=starts.get)
-    for time, kind, team, calc in sorted(raw, key=lambda r: r[0]):
+    for time, kind, team, calc, loc in sorted(raw, key=lambda r: r[0]):
         begun = [h for h in order if starts[h] <= time]
         if not begun:
             continue                              # before the first kick-off
         half = begun[-1]
         if half in ends and time > ends[half]:
             continue                              # half-time, or after the final whistle
-        rows.append((time, half, kind, team, calc))
+        rows.append((time, half, kind, team, calc, loc))
     return rows, starts, ends
 
 
@@ -268,7 +329,47 @@ def half_offset(frame0, groups, teams, cands):
     return peak - SEARCH, float(hist[peak] / max(np.median(hist), 1e-9))
 
 
-def align(rows, starts, truth, blocks, ball, players, team):
+MIRRORS = ((False, False), (True, False), (False, True), (True, True))   # (flip x, flip y)
+
+
+def mirrored(loc, mirror):
+    if loc is None:
+        return None
+    return (external_dfl.PITCH[0] - loc[0] if mirror[0] else loc[0],
+            external_dfl.PITCH[1] - loc[1] if mirror[1] else loc[1])
+
+
+def pick(frames, target, window, loc, ball):
+    """The candidate frame within window of target with the lowest cost: |frames off| / TIME_SCALE
+    plus, with a location, the clean ball's distance from it / SPACE_SCALE. None if no candidate."""
+    lo, hi = np.searchsorted(frames, [target - window, target + window + 1])
+    c = frames[lo:hi]
+    if not len(c):
+        return None
+    cost = np.abs(c - target) / TIME_SCALE
+    if loc is not None:
+        d = np.hypot(ball[c, 0] - loc[0], ball[c, 1] - loc[1])
+        cost = cost + np.nan_to_num(d, nan=LOC_FAR) / SPACE_SCALE
+    return int(c[np.argmin(cost)])
+
+
+def orientation(rows, snaps, ball):
+    """(mirror, median distance) of the log's locations against the clean ball at time-snapped
+    kicks: the mirror with the smallest median, or (None, its median) if none is close enough."""
+    best = (None, np.inf)
+    pairs = [(r[5], s) for r, s in zip(rows, snaps)
+             if s is not None and r[5] is not None and r[2] in KICK_KINDS]
+    if len(pairs) < LOC_MIN_EVENTS:
+        return None, np.nan
+    for mirror in MIRRORS:
+        d = [np.hypot(*(ball[s, :2] - np.array(mirrored(loc, mirror)))) for loc, s in pairs]
+        med = float(np.nanmedian(d))
+        if med < best[1]:
+            best = (mirror, med)
+    return (best[0] if best[1] <= LOC_MAX else None), best[1]
+
+
+def align(rows, starts, truth, blocks, ball, players, team, use_location=True):
     """(events, report). events: [(frame, kind, team, calc frame on our index or -1)] snapped onto
     the clean tracking; report: aggregates for `check`."""
     cands = candidates(ball, players, team)
@@ -293,18 +394,30 @@ def align(rows, starts, truth, blocks, ball, players, team):
         first_snap = [closest(cands[(g, tm)], b, SNAP_WIDE) for g, tm, b in zip(groups, teams, base)]
         resid = np.array([np.nan if s is None else s - b for s, b in zip(first_snap, base)])
         ok = np.flatnonzero(np.isfinite(resid))
+        # one mirror per team: right whether the log's axes are the stadium's or each team's own
+        mirror, loc_median = {}, {}
+        for side in (0, 1):
+            mine = [k for k, tm in enumerate(teams) if tm == side]
+            mirror[side], loc_median[side] = (orientation([rs[k] for k in mine],
+                                                          [first_snap[k] for k in mine], ball)
+                                              if use_location else (None, np.nan))
         snapped, after = [], []
-        for i, (g, tm, b) in enumerate(zip(groups, teams, base)):
+        for i, (r, g, tm, b) in enumerate(zip(rs, groups, teams, base)):
             j = int(np.searchsorted(ok, i))
             right = j + 1 if j < len(ok) and ok[j] == i else j
             near = np.r_[ok[max(0, j - LOCAL):j], ok[right:right + LOCAL]]
             local = int(round(np.median(resid[near]))) if len(near) else 0
-            s = closest(cands[(g, tm)], b + local, SNAP)
+            loc = mirrored(r[5], mirror[tm]) if mirror[tm] is not None else None
+            window = SNAP_WIDE if loc is not None else SNAP
+            s = pick(cands[(g, tm)], b + local, window, loc, ball)
             if s is None and g == "kick":            # a restart from a ball not tracked before it
-                s = closest(cands[("touch", tm)], b + local, SNAP)
+                s = pick(cands[("touch", tm)], b + local, window, loc, ball)
             snapped.append(s)
             if s is not None:
                 after.append(s - b - local)
+        dists = [np.hypot(*(ball[s, :2] - np.array(mirrored(r[5], mirror[r[3]]))))
+                 for r, s in zip(rs, snapped) if s is not None and mirror[r[3]] is not None
+                 and r[5] is not None]
         for r, s in zip(rs, snapped):
             k = report["kinds"].setdefault(r[2], [0, 0])
             k[0] += 1
@@ -317,7 +430,9 @@ def align(rows, starts, truth, blocks, ball, players, team):
             "offset_s": offset / FPS, "sharpness": sharp, "events": len(rs),
             "snapped": len(after),
             "iqr_first": float(np.subtract(*np.nanpercentile(resid, [75, 25]))) if len(ok) else np.nan,
-            "iqr_local": float(np.subtract(*np.percentile(after, [75, 25]))) if after else np.nan})
+            "iqr_local": float(np.subtract(*np.percentile(after, [75, 25]))) if after else np.nan,
+            "mirror": mirror, "loc_median": loc_median,     # per team (0 home, 1 away)
+            "loc_after": float(np.nanmedian(dists)) if dists else np.nan})
     events.sort()
     dedup = []
     for e in events:                              # one event per frame and team
@@ -366,8 +481,12 @@ def check(matches=None):
         for h in rep["halves"]:
             print("{} half: clock offset {:+.2f} s (peak {:.1f}x the median), {} ball actions, "
                   "{} snapped; shift spread (IQR) {:.0f} frames at the half's offset, {:.0f} "
-                  "after the local correction".format(m, h["offset_s"], h["sharpness"], h["events"],
-                                                       h["snapped"], h["iqr_first"], h["iqr_local"]))
+                  "after the local correction; location home {} / away {} (median {:.1f} / {:.1f} m "
+                  "by time, {:.1f} m snapped)".format(
+                      m, h["offset_s"], h["sharpness"], h["events"], h["snapped"], h["iqr_first"],
+                      h["iqr_local"], *["unused" if h["mirror"][t] is None else
+                                        "mirror x {} y {}".format(*h["mirror"][t]) for t in (0, 1)],
+                      h["loc_median"][0], h["loc_median"][1], h["loc_after"]))
         for k, (n, s) in rep["kinds"].items():
             kinds.setdefault(k, [0, 0])
             kinds[k][0] += n
@@ -415,16 +534,18 @@ def simulate(true_events, truth, blocks, ball, players, team, rng, sim=None):
     attributed on `ball` / `players` (video_events.attribute), as on BAR-ATH."""
     sim = dict(SIM, **(sim or {}))
     n = len(truth)
-    kept = [(f, k) for f, k, _, _ in true_events if rng.random() < sim["recall"].get(k, 0.0)]
-    frames = np.array([f for f, _ in kept], dtype=int)
+    kept = [(f, k, tm) for f, k, tm, _ in true_events if rng.random() < sim["recall"].get(k, 0.0)]
+    frames = np.array([f for f, _, _ in kept], dtype=int)
     frames = frames + int(sim["delay"]) + np.round(rng.normal(0, sim["jitter"], len(kept))).astype(int)
-    kinds = [k for _, k in kept]
+    kinds = [k for _, k, _ in kept]
+    logged = [tm for _, _, tm in kept]
     confs = rng.uniform(*sim["conf_true"], len(kept))
     live = np.flatnonzero(np.isin(truth, ["H", "A"]))
     n_false = rng.poisson(sim["false_per_min"] * len(live) / FPS / 60) if len(live) else 0
     if n_false:
         frames = np.r_[frames, rng.choice(live, n_false)]
         kinds = kinds + list(rng.choice(kinds or ["PASS"], n_false))
+        logged = logged + [None] * n_false
         confs = np.r_[confs, rng.uniform(*sim["conf_false"], n_false)]
     graded = np.zeros(n, bool)
     for first, last in blocks:
@@ -438,9 +559,12 @@ def simulate(true_events, truth, blocks, ball, players, team, rng, sim=None):
     for s in rng.choice(live, n_gaps) if n_gaps else []:
         length = 1 + int(rng.exponential(max(sim["gap_len"] - 1, 1e-9)))
         shown[max(0, s - guard):s + length + guard] = False
-    keep = [(int(f), k, float(c)) for f, k, c in zip(frames, kinds, confs) if 0 <= f < n and shown[f]]
-    rows = video_events.attribute(keep, ball, players, team)
-    return sorted((t, lab, round(c, 2), tm) for t, lab, c, tm, _ in rows)
+    keep = [(int(f), k, float(c), tm) for f, k, c, tm in zip(frames, kinds, confs, logged)
+            if 0 <= f < n and shown[f]]
+    rows = video_events.attribute([(t, k, c) for t, k, c, _ in keep], ball, players, team)
+    log = sim["team_from"] == "log"
+    return sorted((t, lab, round(c, 2), int(tm_log) if log and tm_log is not None else tm)
+                  for (t, lab, c, tm, _), (_, _, _, tm_log) in zip(rows, keep))
 
 
 def sim_check(matches=None, sim=None, seed=0):
@@ -452,9 +576,12 @@ def sim_check(matches=None, sim=None, seed=0):
     pooled = None
     for i, m in enumerate(matches):
         (ball, players, team), truth, blocks, events, rep = match_events(m)
-        d_ball, d_players = dfl_eval.degrade(ball, players, blocks, truth=truth, team=team)
+        d_ball, d_players = (dfl_eval.degrade_test(ball, players, blocks, truth, team)
+                             if dfl_eval.TEST_BAR else
+                             dfl_eval.degrade(ball, players, blocks, truth=truth, team=team))
         rng = np.random.default_rng(1000 * seed + i)
-        a_ball = attribution_ball(ball, d_ball, truth, blocks, rng, sim["attr_ball"])
+        a_ball = attribution_ball(ball, d_ball, truth, blocks, rng,
+                                  "bench" if dfl_eval.TEST_BAR else sim["attr_ball"])
         sim_events = simulate(events + rep["carries"], truth, blocks, a_ball, d_players, team,
                               rng, sim)
         graded = (truth != "X").sum() / FPS / 60
@@ -493,24 +620,6 @@ def pool(acc, s, minutes):
 
 # -- 4. bench ---------------------------------------------------------------------------------------
 
-def fills(data):
-    """seq_team / seq_dead / change_logodds leave-one-match-out over DFL + Metrica
-    (touch_bench.fill), cached per variant: video evidence never changes them."""
-    import touch_bench
-    import variant
-    path = variant.cache_path(os.path.join(ROOT, "cache", "bench_video_fills.pkl"))
-    keys = ("seq_team", "seq_dead", "change_logodds")
-    if os.path.isfile(path):
-        with open(path, "rb") as handle:
-            saved = pickle.load(handle)
-        for k, v in data.items():
-            v[5].update(saved[k])
-        return
-    touch_bench.fill(data)
-    with open(path, "wb") as handle:
-        pickle.dump({k: {key: v[5][key] for key in keys} for k, v in data.items()}, handle)
-
-
 def scores(truth, labels):
     import possession_metrics as pm
     r = pm.evaluate(pm.label_codes(truth), pm.label_codes(labels), bootstrap_n=0)
@@ -519,10 +628,9 @@ def scores(truth, labels):
 
 
 def bench(profiles=PROFILES, settings=SETTINGS, seeds=SEEDS):
+    import bench_data
     import dfl_eval
-    import touch_bench
-    data = touch_bench.first_stages()
-    fills(data)
+    data = bench_data.labelled()
     dfl = sorted((m, v) for (source, m), v in data.items() if source == "dfl")
     aligned = {m: match_events(m) for m, _ in dfl}
     blind = {name for name, params in settings.items()
@@ -538,7 +646,8 @@ def bench(profiles=PROFILES, settings=SETTINGS, seeds=SEEDS):
             for i, (m, (b, p, tm, truth, bl, feat)) in enumerate(dfl):
                 (ball, players, team), _, _, events, rep = aligned[m]
                 rng = np.random.default_rng(1000 * seed + i)
-                a_ball = attribution_ball(ball, b, truth, bl, rng, sim["attr_ball"])
+                a_ball = attribution_ball(ball, b, truth, bl, rng,      # testbar: b is BAR-like
+                                          "bench" if dfl_eval.TEST_BAR else sim["attr_ball"])
                 feat["video_events"] = simulate(events + rep["carries"], truth, bl, a_ball, p, tm,
                                                 rng, sim)
                 for name, params in settings.items():
@@ -564,7 +673,10 @@ if __name__ == "__main__":
         check(sys.argv[2:] or None)
     elif command == "sim-check":
         sim_check(sys.argv[2:] or None)
+    elif command == "bench" and "--grid" in sys.argv[2:]:
+        bench({k: PROFILES[k] for k in GRID_PROFILES})
     elif command == "bench":
-        bench()
+        bench({k: PROFILES[k] for k in SPLIT_PROFILES}, {k: SETTINGS[k] for k in SPLIT_SETTINGS},
+              seeds=(0,))
     else:
         print(__doc__)

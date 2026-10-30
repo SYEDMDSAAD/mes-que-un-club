@@ -96,6 +96,19 @@ GAP_DEAD = 200            # mean missing run inside a stoppage, frames
 if variant.has("state40"):
     MISS_LIVE, MISS_DEAD, GAP_LIVE, GAP_DEAD = 0.06, 0.40, 70, 260
 BALL_NOISE_SMOOTH = 12    # frames: Gaussian smoothing of the slow ball noise (state mode)
+# Variant "testbar": a second yardstick. Every model is still TRAINED on the damage above, but the
+# bench matches are TESTED on a ball that looks like BAR-ATH's: missing by state at the full
+# match's rates (MISS_LIVE / MISS_DEAD and GAP_*: 7.4% of in-play frames, not the ~30-37% that the
+# clock-time gap pattern leaves on DFL's play -- domain_check "seen") and smoothed and offset like
+# our ATD (the metatd transform: in-play speed, velocity change and ball-to-player distance of
+# BAR-ATH), drifting in stoppages as in "drift". That is the submission's own situation -- trained
+# on the drift damage, run on a ball missing by state -- so decisions that hinge on how often and
+# how well the ball is seen (alive_level, seq_gate, motion, touch, video) can be checked on it.
+TEST_BAR = variant.has("testbar")
+TEST_BLUR = 3.0           # frames (external_metrica.ATD_BLUR)
+TEST_SLOW = 1.15          # m, smoothed over TEST_SLOW_SMOOTH frames (ATD_SLOW)
+TEST_SLOW_SMOOTH = 12
+TEST_JITTER = 0.01        # m, smoothed over 1.5 frames
 
 
 def training_copies(ball, players, blocks, truth=None, team=None, drop_len=None):
@@ -270,6 +283,26 @@ def degrade(ball, players, blocks, seed=SEED, randomize=False, truth=None, team=
     return ball, players
 
 
+def degrade_test(ball, players, blocks, truth, team=None, seed=SEED):
+    """Variant "testbar": the bench's test copy of a DFL match with a BAR-like ball (see the
+    TEST_BAR comment); the players are damaged exactly as degrade() damages them."""
+    from scipy.ndimage import gaussian_filter1d
+    _, d_players = degrade(ball, players, blocks, seed=seed, truth=truth, team=team)
+    rng = np.random.default_rng(seed + 4049)
+    out = blur_runs(ball, TEST_BLUR)
+    seen = np.isfinite(out[:, 0])
+    for sd, smooth in ((TEST_SLOW, TEST_SLOW_SMOOTH), (TEST_JITTER, 1.5)):
+        z = gaussian_filter1d(rng.normal(0, 1, (len(out), 2)), smooth, axis=0, mode="nearest")
+        out[:, :2] += (z * (sd / z.std(axis=0))).astype(out.dtype)
+    drift = slow_noise(rng, len(out), DEAD_DRIFT, BALL_NOISE_SMOOTH)
+    out[:, :2] += (drift * (np.asarray(truth) == "D")[:, None]).astype(out.dtype)
+    out[~seen, :2] = np.nan
+    for first, last in blocks:
+        kept = state_seen(np.asarray(truth[first:last + 1]), rng)
+        out[first:last + 1][~kept] = np.nan
+    return out, d_players
+
+
 def baseline(ball, players, team, blocks, window=50):
     """The organisers' reference: nearest player's team, majority vote over +/- window, D if no ball."""
     d = np.hypot(players[..., 0] - ball[:, None, 0], players[..., 1] - ball[:, None, 1])
@@ -321,15 +354,20 @@ def cached_matches():
     return sorted(f[:-4] for f in os.listdir(CACHE_DIR) if f.endswith(".npz"))
 
 
-def prepare(matches=None, dead_ml=False, team_ml=False, motion_ml=False):
+def prepare(matches=None, dead_ml=False, team_ml=False, motion_ml=False, test_bar=None):
     """{match: (ball, players, team, truth, blocks, feat)} on damaged data, learned evidence
-    filled leave-one-match-out: the classifiers scoring a match never saw it."""
+    filled leave-one-match-out: the classifiers scoring a match never saw it. test_bar (default:
+    variant "testbar"): the arrays returned -- the ones scored -- carry the BAR-like test damage,
+    while the classifiers still learn from the usual damage."""
     matches = matches or cached_matches()
+    test_bar = TEST_BAR if test_bar is None else test_bar
     data, copies = {}, {}
     for m in matches:
         ball, players, team, truth, blocks = load_match(m)
         d_ball, d_players = degrade(ball, players, blocks, truth=truth, team=team)
-        data[m] = (d_ball, d_players, team, truth, blocks, {})
+        t_ball, t_players = (degrade_test(ball, players, blocks, truth, team) if test_bar
+                             else (d_ball, d_players))
+        data[m] = (t_ball, t_players, team, truth, blocks, {})
         if dead_ml or team_ml or motion_ml:
             copies[m] = (training_copies(ball, players, blocks, truth, team)
                          if TRAIN_COPIES > 1 else [(d_ball, d_players)])
@@ -389,7 +427,7 @@ def seq_training_set():
     exactly the situation of BAR-ATH, where every first-stage model is out of sample.
     """
     import seq
-    data = prepare(dead_ml=True, team_ml=True, motion_ml=seq.MOTION)
+    data = prepare(dead_ml=True, team_ml=True, motion_ml=seq.MOTION, test_bar=False)
     xs, labels = [], []
     for ball, players, team, truth, blocks, feat in data.values():
         loader.OVERRIDE = (ball, players, team)

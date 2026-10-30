@@ -25,6 +25,8 @@ its own models and the submission's stay untouched. Variants read TAG to switch 
     nomotion  without the ball-blind, player-only possession model (motion_ml.py), on since v15
     motionline  + back-line / front-line velocities in the motion model (motion_ml.lines)
     motioncopiesN  N randomly damaged training copies per DFL match for the motion model alone
+    testbar  benches only: the DFL matches are scored on a BAR-like ball (dfl_eval.degrade_test)
+            while every model is still trained on the usual damage (bench_data.py)
 
 Parts combine with "+": MQUC_VARIANT=motion+wrongball3+droplen250.
 """
@@ -48,9 +50,12 @@ def value(prefix, default):
     return default
 
 
-def cache_path(path):
-    """path, with the variant's tag before the extension when a variant is active."""
-    if not TAG:
+def cache_path(path, without=()):
+    """path, with the variant's tag before the extension when a variant is active. without:
+    parts left out of the tag (bench_data.py reads the training-damage caches of "x+testbar"
+    from those of "x")."""
+    tag = "+".join(part for part in PARTS if part not in without) if without else TAG
+    if not tag:
         return path
     root, ext = os.path.splitext(path)
-    return "{}.{}{}".format(root, TAG, ext)
+    return "{}.{}{}".format(root, tag, ext)

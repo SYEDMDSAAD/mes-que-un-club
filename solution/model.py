@@ -489,7 +489,8 @@ def touch_features(feat):
     if "touch" not in feat:
         import touchfeat
         ball, players, team = load()
-        if seq.TOUCH_BLUR > 0 and BLOCKS is not None:      # a training or bench match, not ours
+        if seq.TOUCH_BLUR > 0 and BLOCKS is not None and not feat.get("bar_like"):
+            # a training or bench match, not ours (and not one already damaged to look like ours)
             import dfl_eval
             ball = dfl_eval.blur_runs(ball, seq.TOUCH_BLUR)
         feat["touch"] = touchfeat.compute(ball, players, team)
